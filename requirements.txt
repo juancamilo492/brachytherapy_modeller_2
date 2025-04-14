@@ -7,3 +7,4 @@ scikit-image
 opencv-python
 scikit-learn
 scipy
+zipfile36
