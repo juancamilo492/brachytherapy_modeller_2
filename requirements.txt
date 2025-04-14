@@ -8,3 +8,4 @@ opencv-python
 scikit-learn
 scipy
 zipfile36
+opencv-python-headless
