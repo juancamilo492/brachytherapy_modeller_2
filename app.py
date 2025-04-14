@@ -1197,3 +1197,59 @@ def evaluate_plan_quality(dose_matrix, tumor_mask, risk_mask, prescribed_dose):
     return results
 
 
+def generar_plan_global(tumor_centers, pixel_spacing_mm=1.0, slice_thickness_mm=3.0):
+    """
+    Genera un plan de inserción de agujas basado en el volumen completo del tumor.
+
+    Args:
+        tumor_centers: Lista de (slice, y, x) del centro del tumor por corte.
+        pixel_spacing_mm: Tamaño del pixel en mm (por defecto 1.0).
+        slice_thickness_mm: Espesor de corte en mm (por defecto 3.0).
+
+    Returns:
+        Lista de trayectorias en coordenadas reales (mm).
+    """
+    agujas = []
+    for s, y, x in tumor_centers:
+        z = s * slice_thickness_mm
+        # Ajustamos entrada por debajo del tumor, suponiendo inserción transperineal
+        entry_y = y + 30  # 30 píxeles por debajo en la imagen (hacia afuera del cuerpo)
+        entry_z = z - 30  # 30 mm por debajo en profundidad
+
+        entry_point = np.array([entry_y, x, entry_z]) * pixel_spacing_mm
+        target_point = np.array([y, x, z]) * pixel_spacing_mm
+
+        agujas.append({
+            'entry': entry_point.tolist(),
+            'target': target_point.tolist()
+        })
+    return agujas
+
+
+# Botón para mostrar las trayectorias globales al final del análisis 3D
+if img is not None and n_slices > 1 and tumor_centers:
+    if st.button("Generar trayectorias globales de agujas"):
+        with st.spinner("Calculando trayectorias globales..."):
+            trayectorias = generar_plan_global(tumor_centers)
+
+            st.markdown("### Trayectorias globales sugeridas")
+            df_agujas = pd.DataFrame([
+                {
+                    'Aguja': i+1,
+                    'Entrada (mm)': f"({round(t['entry'][1],1)}, {round(t['entry'][0],1)}, {round(t['entry'][2],1)})",
+                    'Objetivo (mm)': f"({round(t['target'][1],1)}, {round(t['target'][0],1)}, {round(t['target'][2],1)})"
+                } for i, t in enumerate(trayectorias)
+            ])
+
+            st.table(df_agujas)
+
+            # Exportar plan global a CSV
+            csv_data = pd.DataFrame(trayectorias).to_csv(index=False)
+            st.download_button(
+                label="Descargar plan global (CSV)",
+                data=csv_data,
+                file_name="plan_agujas_global.csv",
+                mime="text/csv"
+            )
+
+
