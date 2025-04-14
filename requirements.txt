@@ -2,3 +2,8 @@ streamlit
 pandas
 matplotlib
 SimpleITK
+numpy
+scikit-image
+opencv-python
+scikit-learn
+scipy
