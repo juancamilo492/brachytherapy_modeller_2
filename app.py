@@ -1226,11 +1226,76 @@ def generar_plan_global(tumor_centers, pixel_spacing_mm=1.0, slice_thickness_mm=
     return agujas
 
 
-# Botón para mostrar las trayectorias globales al final del análisis 3D
-if img is not None and n_slices > 1 and tumor_centers:
+# Análisis 3D del volumen (asegura que se almacenen los resultados globales)
+if img is not None and n_slices > 1:
+    st.markdown('<p class="sub-header">Análisis 3D</p>', unsafe_allow_html=True)
+
+    if st.button("Realizar análisis 3D del volumen"):
+        with st.spinner("Procesando volumen 3D..."):
+            start_slice = max(0, slice_ix - 5)
+            end_slice = min(n_slices, slice_ix + 5)
+
+            st.session_state.tumor_volumes = []
+            st.session_state.tumor_areas = []
+            st.session_state.tumor_centers = []
+
+            for s in range(start_slice, end_slice):
+                if s not in segmentation_data:
+                    tumor_mask = segment_tumor(img[s])
+                    segmentation_data[s] = {
+                        'tumor_mask': tumor_mask,
+                        'risk_mask': detect_organs_at_risk(img[s]),
+                        'combined_mask': None
+                    }
+                else:
+                    tumor_mask = segmentation_data[s]['tumor_mask']
+
+                area_pixels = np.sum(tumor_mask)
+                if area_pixels > 0:
+                    pixel_area_mm2 = 1.0
+                    slice_thickness_mm = 3.0
+
+                    area_mm2 = area_pixels * pixel_area_mm2
+                    volume_mm3 = area_mm2 * slice_thickness_mm
+
+                    tumor_indices = np.where(tumor_mask > 0)
+                    if len(tumor_indices[0]) > 0:
+                        center_y = int(np.mean(tumor_indices[0]))
+                        center_x = int(np.mean(tumor_indices[1]))
+
+                        st.session_state.tumor_areas.append(area_mm2)
+                        st.session_state.tumor_volumes.append(volume_mm3)
+                        st.session_state.tumor_centers.append((s, center_y, center_x))
+
+            if st.session_state.tumor_volumes:
+                total_volume = sum(st.session_state.tumor_volumes)
+
+                st.markdown(f"### Resultados del análisis 3D")
+                st.markdown(f"**Volumen estimado del tumor:** {total_volume:.2f} mm³")
+                st.markdown(f"**Cortes con tumor detectado:** {len(st.session_state.tumor_volumes)} de {end_slice - start_slice}")
+
+                volume_df = pd.DataFrame({
+                    'Corte': list(range(start_slice, start_slice + len(st.session_state.tumor_volumes))),
+                    'Volumen (mm³)': st.session_state.tumor_volumes
+                })
+
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.bar(volume_df['Corte'], volume_df['Volumen (mm³)'], color='#28aec5')
+                ax.set_xlabel('Número de corte')
+                ax.set_ylabel('Volumen del tumor (mm³)')
+                ax.set_title('Distribución del volumen del tumor por corte')
+                ax.grid(True, linestyle='--', alpha=0.7)
+                st.pyplot(fig)
+
+                best_slices = volume_df.sort_values('Volumen (mm³)', ascending=False).head(3)['Corte'].tolist()
+                st.markdown("#### Recomendación para planificación")
+                st.markdown(f"Basado en la distribución del volumen del tumor, se recomienda realizar la planificación de agujas en los siguientes cortes: **{', '.join([str(s) for s in best_slices])}**")
+
+# Botón para trayectorias globales basadas en tumor_centers
+if img is not None and n_slices > 1 and "tumor_centers" in st.session_state and st.session_state.tumor_centers:
     if st.button("Generar trayectorias globales de agujas"):
         with st.spinner("Calculando trayectorias globales..."):
-            trayectorias = generar_plan_global(tumor_centers)
+            trayectorias = generar_plan_global(st.session_state.tumor_centers)
 
             st.markdown("### Trayectorias globales sugeridas")
             df_agujas = pd.DataFrame([
@@ -1243,7 +1308,6 @@ if img is not None and n_slices > 1 and tumor_centers:
 
             st.table(df_agujas)
 
-            # Exportar plan global a CSV
             csv_data = pd.DataFrame(trayectorias).to_csv(index=False)
             st.download_button(
                 label="Descargar plan global (CSV)",
