@@ -622,113 +622,113 @@ elif st.session_state['active_view_mode'] == "dual":
             st.markdown(f"**WW/WL:** {window_width_secondary:.1f}/{window_center_secondary:.1f}")
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-st.markdown('<div class="tab-secondary">', unsafe_allow_html=True)
-            st.markdown('<p class="sub-header" style="font-size: 18px;">Imagen Secundaria (No cargada)</p>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-elif st.session_state['active_view_mode'] == "fusion":
-    st.markdown('<p class="sub-header">Fusión de Imágenes DICOM</p>', unsafe_allow_html=True)
-    
-    if img_primary is not None and img_secondary is not None:
-        # Realizar fusión de imágenes
-        st.markdown('<div class="fusion-controls">', unsafe_allow_html=True)
-        st.markdown("### Imagen fusionada (TC + RM)")
-        
-        # Mostrar información sobre las imágenes a fusionar
-        info_cols = st.columns(3)
-        with info_cols[0]:
-            st.markdown(f"**Primaria:** Corte {slice_ix_primary + 1}/{n_slices_primary}")
-        with info_cols[1]:
-            st.markdown(f"**Secundaria:** Corte {slice_ix_secondary + 1}/{n_slices_secondary}")
-        with info_cols[2]:
-            st.markdown(f"**Transparencia:** {int((1-transparency)*100)}% / {int(transparency*100)}%")
-        
-        # Realizar fusión de imágenes (la función ya maneja negativos)
-        fig = plot_fusion(
-            img_primary, img_secondary, 
-            slice_ix_primary, slice_ix_secondary, 
-            window_width_primary, window_center_primary,
-            window_width_secondary, window_center_secondary,
-            transparency, colormap_primary, colormap_secondary
-        )
-        st.pyplot(fig)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Explicación de la fusión
-        st.markdown("""
-        <div class="info-box">
-        <p>La fusión de imágenes muestra la imagen primaria (generalmente TC) en tonos de gris, 
-        combinada con la imagen secundaria (generalmente RM) utilizando un mapa de color alternativo.
-        Ajuste la transparencia para controlar la mezcla de ambas modalidades.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    elif img_primary is not None and img_secondary is None:
-        st.warning("⚠️ Para la fusión de imágenes, es necesario cargar tanto imágenes primarias como secundarias. Por favor, carga un archivo ZIP con imágenes secundarias (RM).")
-        # Mostrar solo la imagen primaria mientras tanto
-        fig = plot_slice(img_primary, slice_ix_primary, window_width_primary, window_center_primary, colormap_primary)
-        st.pyplot(fig)
-    elif img_primary is None and img_secondary is not None:
-        st.warning("⚠️ Para la fusión de imágenes, es necesario cargar tanto imágenes primarias como secundarias. Por favor, carga un archivo ZIP con imágenes primarias (TC).")
-        # Mostrar solo la imagen secundaria mientras tanto
-        fig = plot_slice(img_secondary, slice_ix_secondary, window_width_secondary, window_center_secondary, colormap_secondary)
-        st.pyplot(fig)
-    else:
-        st.warning("⚠️ Para la fusión de imágenes, es necesario cargar tanto imágenes primarias (TC) como secundarias (RM). Por favor, carga los archivos ZIP correspondientes.")
-        # Mostrar mensaje de instrucción
-        st.markdown("""
-        <div style="text-align: center; padding: 40px; margin-top: 10px;">
-            <img src="https://raw.githubusercontent.com/SimpleITK/SimpleITK/master/Documentation/docs/images/simpleitk-logo.svg" alt="SimpleITK Logo" width="200">
-            <h2 style="color: #28aec5; margin-top: 20px;">Fusión de imágenes multimodales</h2>
-            <p style="font-size: 18px; margin-top: 10px;">Para visualizar la fusión de TC y RM, sube ambos conjuntos de imágenes DICOM en el panel lateral</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-# Sección para metadatos
-if st.session_state['active_view_mode'] == "single" and img_primary is not None:
-    # Opción para ver metadatos o imagen
-    output = st.radio('Tipo de visualización', ['Imagen', 'Metadatos'], index=0)
-    
-    if output == 'Metadatos' and reader_primary is not None:
-        st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
-        try:
-            metadata = dict()
-            for k in reader_primary.GetMetaDataKeys(slice_ix_primary):
-                metadata[k] = reader_primary.GetMetaData(slice_ix_primary, k)
-            df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
-            st.dataframe(df, height=600)
-        except Exception as e:
-            st.error(f"Error al leer metadatos: {str(e)}")
-
-# Añadir función de registro para trayectorias de agujas (como mejora solicitada)
-if img_primary is not None and (st.session_state['active_view_mode'] == "single" or st.session_state['active_view_mode'] == "fusion"):
-    st.markdown('<div class="control-section">', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Trayectorias de agujas para braquiterapia</p>', unsafe_allow_html=True)
-    
-    with st.expander("Herramienta de registro de trayectorias"):
-        st.markdown("""
-        Esta sección permitirá registrar y visualizar las trayectorias de las agujas para braquiterapia.
-        En futuras actualizaciones, podrá:
-        - Marcar puntos de entrada y salida
-        - Calcular la trayectoria óptima
-        - Generar plantillas de implante
-        - Exportar coordenadas para sistemas de planificación
-        """)
-        
-        st.warning("Funcionalidad en desarrollo - Estará disponible en próximas versiones")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# Pie de página
-st.markdown("""
-<hr style="margin-top: 30px;">
-<div style="text-align: center; color: #28aec5; font-size: 14px;">
-    Brachyanalysis - Visualizador avanzado de imágenes DICOM para braquiterapia
-</div>
-""", unsafe_allow_html=True)
-
-# Limpiar los directorios temporales cuando se reinicie la aplicación
-# Nota: Esta es una aproximación ya que Streamlit mantiene el estado entre ejecuciones
-if st.session_state['temp_dirs']:
-    for temp_dir in st.session_state['temp_dirs']:
-        if os.path.exists(temp_dir):
-            # En una aplicación real, aquí se implementaría la limpieza
-            pass
+            st.markdown('<div class="tab-secondary">', unsafe_allow_html=True)
+                        st.markdown('<p class="sub-header" style="font-size: 18px;">Imagen Secundaria (No cargada)</p>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+            
+            elif st.session_state['active_view_mode'] == "fusion":
+                st.markdown('<p class="sub-header">Fusión de Imágenes DICOM</p>', unsafe_allow_html=True)
+                
+                if img_primary is not None and img_secondary is not None:
+                    # Realizar fusión de imágenes
+                    st.markdown('<div class="fusion-controls">', unsafe_allow_html=True)
+                    st.markdown("### Imagen fusionada (TC + RM)")
+                    
+                    # Mostrar información sobre las imágenes a fusionar
+                    info_cols = st.columns(3)
+                    with info_cols[0]:
+                        st.markdown(f"**Primaria:** Corte {slice_ix_primary + 1}/{n_slices_primary}")
+                    with info_cols[1]:
+                        st.markdown(f"**Secundaria:** Corte {slice_ix_secondary + 1}/{n_slices_secondary}")
+                    with info_cols[2]:
+                        st.markdown(f"**Transparencia:** {int((1-transparency)*100)}% / {int(transparency*100)}%")
+                    
+                    # Realizar fusión de imágenes (la función ya maneja negativos)
+                    fig = plot_fusion(
+                        img_primary, img_secondary, 
+                        slice_ix_primary, slice_ix_secondary, 
+                        window_width_primary, window_center_primary,
+                        window_width_secondary, window_center_secondary,
+                        transparency, colormap_primary, colormap_secondary
+                    )
+                    st.pyplot(fig)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Explicación de la fusión
+                    st.markdown("""
+                    <div class="info-box">
+                    <p>La fusión de imágenes muestra la imagen primaria (generalmente TC) en tonos de gris, 
+                    combinada con la imagen secundaria (generalmente RM) utilizando un mapa de color alternativo.
+                    Ajuste la transparencia para controlar la mezcla de ambas modalidades.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif img_primary is not None and img_secondary is None:
+                    st.warning("⚠️ Para la fusión de imágenes, es necesario cargar tanto imágenes primarias como secundarias. Por favor, carga un archivo ZIP con imágenes secundarias (RM).")
+                    # Mostrar solo la imagen primaria mientras tanto
+                    fig = plot_slice(img_primary, slice_ix_primary, window_width_primary, window_center_primary, colormap_primary)
+                    st.pyplot(fig)
+                elif img_primary is None and img_secondary is not None:
+                    st.warning("⚠️ Para la fusión de imágenes, es necesario cargar tanto imágenes primarias como secundarias. Por favor, carga un archivo ZIP con imágenes primarias (TC).")
+                    # Mostrar solo la imagen secundaria mientras tanto
+                    fig = plot_slice(img_secondary, slice_ix_secondary, window_width_secondary, window_center_secondary, colormap_secondary)
+                    st.pyplot(fig)
+                else:
+                    st.warning("⚠️ Para la fusión de imágenes, es necesario cargar tanto imágenes primarias (TC) como secundarias (RM). Por favor, carga los archivos ZIP correspondientes.")
+                    # Mostrar mensaje de instrucción
+                    st.markdown("""
+                    <div style="text-align: center; padding: 40px; margin-top: 10px;">
+                        <img src="https://raw.githubusercontent.com/SimpleITK/SimpleITK/master/Documentation/docs/images/simpleitk-logo.svg" alt="SimpleITK Logo" width="200">
+                        <h2 style="color: #28aec5; margin-top: 20px;">Fusión de imágenes multimodales</h2>
+                        <p style="font-size: 18px; margin-top: 10px;">Para visualizar la fusión de TC y RM, sube ambos conjuntos de imágenes DICOM en el panel lateral</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Sección para metadatos
+            if st.session_state['active_view_mode'] == "single" and img_primary is not None:
+                # Opción para ver metadatos o imagen
+                output = st.radio('Tipo de visualización', ['Imagen', 'Metadatos'], index=0)
+                
+                if output == 'Metadatos' and reader_primary is not None:
+                    st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
+                    try:
+                        metadata = dict()
+                        for k in reader_primary.GetMetaDataKeys(slice_ix_primary):
+                            metadata[k] = reader_primary.GetMetaData(slice_ix_primary, k)
+                        df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
+                        st.dataframe(df, height=600)
+                    except Exception as e:
+                        st.error(f"Error al leer metadatos: {str(e)}")
+            
+            # Añadir función de registro para trayectorias de agujas (como mejora solicitada)
+            if img_primary is not None and (st.session_state['active_view_mode'] == "single" or st.session_state['active_view_mode'] == "fusion"):
+                st.markdown('<div class="control-section">', unsafe_allow_html=True)
+                st.markdown('<p class="sub-header">Trayectorias de agujas para braquiterapia</p>', unsafe_allow_html=True)
+                
+                with st.expander("Herramienta de registro de trayectorias"):
+                    st.markdown("""
+                    Esta sección permitirá registrar y visualizar las trayectorias de las agujas para braquiterapia.
+                    En futuras actualizaciones, podrá:
+                    - Marcar puntos de entrada y salida
+                    - Calcular la trayectoria óptima
+                    - Generar plantillas de implante
+                    - Exportar coordenadas para sistemas de planificación
+                    """)
+                    
+                    st.warning("Funcionalidad en desarrollo - Estará disponible en próximas versiones")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Pie de página
+            st.markdown("""
+            <hr style="margin-top: 30px;">
+            <div style="text-align: center; color: #28aec5; font-size: 14px;">
+                Brachyanalysis - Visualizador avanzado de imágenes DICOM para braquiterapia
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Limpiar los directorios temporales cuando se reinicie la aplicación
+            # Nota: Esta es una aproximación ya que Streamlit mantiene el estado entre ejecuciones
+            if st.session_state['temp_dirs']:
+                for temp_dir in st.session_state['temp_dirs']:
+                    if os.path.exists(temp_dir):
+                        # En una aplicación real, aquí se implementaría la limpieza
+                        pass
