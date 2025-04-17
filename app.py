@@ -906,16 +906,18 @@ elif display_mode == "Fusión":
             # Expander para ajustes rápidos de ventana
             with st.expander("Ajustes rápidos", expanded=False):
                 st.markdown("**Ajustes CT**")
-                st.slider("WW primario", 1.0, max(img1.max()-img1.min(), 2000.0), ww1, 
+                st.slider("WW primario", min_value=1.0, max_value=float(max(img1.max()-img1.min(), 2000.0)), value=float(ww1), step=0.1,
                           key="fusion_ww1", on_change=lambda: setattr(st.session_state.primary_data, 'window_width', st.session_state.fusion_ww1))
-                st.slider("WL primario", img1.min(), img1.max(), wc1, 
+                st.slider("WL primario", min_value=float(img1.min()), max_value=float(img1.max()), value=float(wc1), step=0.1,
                           key="fusion_wc1", on_change=lambda: setattr(st.session_state.primary_data, 'window_center', st.session_state.fusion_wc1))
+
                 
                 st.markdown("**Ajustes MRI**")
-                st.slider("WW secundario", 1.0, max(img2.max()-img2.min(), 2000.0), ww2, 
+                st.slider("WW secundario", min_value=1.0, max_value=float(max(img2.max()-img2.min(), 2000.0)), value=float(ww2), step=0.1,
                           key="fusion_ww2", on_change=lambda: setattr(st.session_state.secondary_data, 'window_width', st.session_state.fusion_ww2))
-                st.slider("WL secundario", img2.min(), img2.max(), wc2, 
+                st.slider("WL secundario", min_value=float(img2.min()), max_value=float(img2.max()), value=float(wc2), step=0.1,
                           key="fusion_wc2", on_change=lambda: setattr(st.session_state.secondary_data, 'window_center', st.session_state.fusion_wc2))
+
     else:
         if st.session_state.primary_data['img'] is None:
             st.warning("Falta cargar la imagen primaria (CT)")
