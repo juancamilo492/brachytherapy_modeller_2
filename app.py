@@ -707,19 +707,19 @@ if dirname is not None:
                     
                     st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
-        else:
-            # Valores predeterminados para cuando no son necesarios
-            window_width = max_val - min_val if 'max_val' in locals() else 1000
-            window_center = (max_val + min_val) / 2 if 'max_val' in locals() else 0
-            is_negative = False
-                
-        except Exception as e:
-            st.sidebar.error(f"Error al procesar los archivos DICOM: {str(e)}")
-            st.sidebar.write("Detalles del error:", str(e))
-            # Valores predeterminados
-            window_width = 1000
-            window_center = 0
-            is_negative = False
+                else:
+                    # Valores predeterminados para cuando no son necesarios
+                    window_width = max_val - min_val if 'max_val' in locals() else 1000
+                    window_center = (max_val + min_val) / 2 if 'max_val' in locals() else 0
+                    is_negative = False
+                        
+                except Exception as e:
+                    st.sidebar.error(f"Error al procesar los archivos DICOM: {str(e)}")
+                    st.sidebar.write("Detalles del error:", str(e))
+                    # Valores predeterminados
+                    window_width = 1000
+                    window_center = 0
+                    is_negative = False
 
 # Visualización en la ventana principal
 # Título grande siempre visible
