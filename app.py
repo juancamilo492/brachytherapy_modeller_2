@@ -448,7 +448,7 @@ def plot_slice_with_segmentation(vol, slice_ix, window_width, window_center, seg
         ax.imshow(segmentation_overlay, origin='lower')
     
     # Si hay puntos proyectados, mostrarlos
-    if projected_points and len(projected_points) > 0:
+   if projected_points is not None and np.size(projected_points) > 0:
         # Convertir coordenadas esféricas a cartesianas
         center = (selected_slice.shape[1] // 2, selected_slice.shape[0] // 2)
         for theta, phi in projected_points:
