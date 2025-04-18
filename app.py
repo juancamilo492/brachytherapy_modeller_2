@@ -14,14 +14,42 @@ from torchvision import transforms
 import monai
 from monai.networks.nets import UNet
 from monai.transforms import (
-    AddChanneld, ScaleIntensityd, ToTensord, Compose, LoadImaged,
-    Orientationd, Spacingd, Resized, AsDiscrete
+    AddChannel, ScaleIntensity, ToTensor, Compose, LoadImage,
+    Orientation, Spacing, Resize, AsDiscrete
 )
+from monai.transforms.compose import MapTransform
 from monai.data import Dataset, DataLoader
 from monai.inferers import sliding_window_inference
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import binary_erosion, binary_dilation
+
+class AddChanneld(MapTransform):
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.keys:
+            d[key] = AddChannel()(d[key])
+        return d
+
+class ScaleIntensityd(MapTransform):
+    def __init__(self, keys, minv=0.0, maxv=1.0):
+        super().__init__(keys)
+        self.minv = minv
+        self.maxv = maxv
+    
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.keys:
+            d[key] = ScaleIntensity(minv=self.minv, maxv=self.maxv)(d[key])
+        return d
+
+class ToTensord(MapTransform):
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.keys:
+            d[key] = ToTensor()(d[key])
+        return d
+
 
 # Configuración de página y estilo
 st.set_page_config(layout="wide", page_title="Brachyanalysis")
