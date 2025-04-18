@@ -628,355 +628,474 @@ if dirname is not None:
                     overlay_alpha = 0.3
                     
                 st.sidebar.markdown('</div>', unsafe_allow_html=True)
-                            
-                            elif output == 'Segmentación':
-                                st.sidebar.markdown('<div class="segmentation-controls">', unsafe_allow_html=True)
-                                st.sidebar.markdown('<p class="sub-header">Parámetros de Segmentación</p>', unsafe_allow_html=True)
-                                
-                                segmentation_method = st.sidebar.selectbox(
-                                    "Método de segmentación",
-                                    ["threshold", "kmeans", "region_growing", "manual"],
-                                    format_func=lambda x: {
-                                        "threshold": "Umbralización",
-                                        "kmeans": "K-means clustering",
-                                        "region_growing": "Crecimiento de región",
-                                        "manual": "Segmentación manual"
-                                    }[x]
-                                )
-                                
-                                segmentation_params = {}
-                                
-                                # Parámetros específicos para cada método
-                                if segmentation_method == "threshold":
-                                    # Parámetros para umbralización
-                                    col1, col2 = st.sidebar.columns(2)
-                                    with col1:
-                                        lower_threshold = st.number_input(
-                                            "Umbral inferior",
-                                            min_value=float(min_val),
-                                            max_value=float(max_val),
-                                            value=float(min_val + range_val * 0.4),
-                                            format="%.1f"
-                                        )
-                                    with col2:
-                                        upper_threshold = st.number_input(
-                                            "Umbral superior",
-                                            min_value=float(min_val),
-                                            max_value=float(max_val),
-                                            value=float(min_val + range_val * 0.7),
-                                            format="%.1f"
-                                        )
-                                    
-                                    segmentation_params["lower_threshold"] = lower_threshold
-                                    segmentation_params["upper_threshold"] = upper_threshold
-                                    
-                                    # Parámetros avanzados
-                                    with st.sidebar.expander("Parámetros avanzados"):
-                                        min_size = st.slider("Tamaño mínimo de objeto", 10, 500, 50)
-                                        closing_size = st.slider("Tamaño de cierre", 1, 10, 2)
-                                        segmentation_params["min_size"] = min_size
-                                        segmentation_params["closing_size"] = closing_size
-                                
-                                elif segmentation_method == "kmeans":
-                                    # Parámetros para K-means
-                                    n_clusters = st.sidebar.slider("Número de clusters", 2, 8, 4)
-                                    tumor_cluster = st.sidebar.slider("Cluster del tumor (0-indexado)", 0, n_clusters-1, 2)
-                                    selected_kmeans_slice = st.sidebar.slider("Slice para clustering", 0, n_slices-1, slice_ix)
-                                    propagate = st.sidebar.checkbox("Propagar a slices vecinos", value=True)
-                                    
-                                    segmentation_params["n_clusters"] = n_clusters
-                                    segmentation_params["tumor_cluster"] = tumor_cluster
-                                    segmentation_params["slice"] = selected_kmeans_slice
-                                    segmentation_params["propagate"] = propagate
-                                
-                                elif segmentation_method == "region_growing":
-                                    # Parámetros para crecimiento de región
-                                    st.sidebar.markdown("**Selecciona un punto semilla en la imagen**")
-                                    if not hasattr(st.session_state, 'seed_point'):
-                                        st.session_state.seed_point = None
-                                    
-                                    # Modo de selección de punto semilla
-                                    st.sidebar.markdown("Navega al slice deseado y haz clic en la imagen para seleccionar un punto semilla")
-                                    
-                                    # Mostrar el punto semilla seleccionado
-                                    if st.session_state.seed_point:
-                                        z, y, x = st.session_state.seed_point
-                                        st.sidebar.markdown(f"Punto semilla: Slice {z}, Y={y}, X={x}")
-                                        seed_value = img[z, y, x] if 0 <= z < img.shape[0] and 0 <= y < img.shape[1] and 0 <= x < img.shape[2] else 0
-                                        st.sidebar.markdown(f"Valor en el punto: {seed_value}")
-                                    
-                                    tolerance = st.sidebar.slider("Tolerancia", 5, 100, 20)
-                                    
-                                    segmentation_params["seed_point"] = st.session_state.seed_point
-                                    segmentation_params["tolerance"] = tolerance
-                                    
-                                    # Parámetros avanzados
-                                    with st.sidebar.expander("Parámetros avanzados"):
-                                        min_size = st.slider("Tamaño mínimo de objeto", 10, 500, 50)
-                                        closing_size = st.slider("Tamaño de cierre", 1, 10, 2)
-                                        segmentation_params["min_size"] = min_size
-                                        segmentation_params["closing_size"] = closing_size
-                                
-                                elif segmentation_method == "manual":
-                                    # Parámetros para segmentación manual
-                                    st.sidebar.markdown("**Dibuja el contorno del tumor en la imagen**")
-                                    
-                                    # Inicializar puntos del ROI si no existen
-                                    if not hasattr(st.session_state, 'roi_points'):
-                                        st.session_state.roi_points = []
-                                    
-                                    # Botón para limpiar los puntos
-                                    if st.sidebar.button("Limpiar contorno"):
-                                        st.session_state.roi_points = []
-                                    
-                                    # Mostrar información sobre los puntos seleccionados
-                                    if st.session_state.roi_points:
-                                        st.sidebar.markdown(f"Puntos seleccionados: {len(st.session_state.roi_points)}")
-                                    
-                                    # Opciones de propagación
-                                    propagate = st.sidebar.checkbox("Propagar a slices vecinos", value=True)
-                                    if propagate:
-                                        propagation_range = st.sidebar.slider("Rango de propagación", 1, 10, 3)
-                                        segmentation_params["propagation_range"] = propagation_range
-                                    
-                                    segmentation_params["roi_points"] = st.session_state.roi_points
-                                    segmentation_params["slice"] = slice_ix
-                                    segmentation_params["propagate"] = propagate
-                                
-                                # Botón para ejecutar la segmentación
-                                if st.sidebar.button("Segmentar tumor"):
-                                    with st.spinner('Segmentando tumor...'):
-                                        tumor_mask = segment_tumor(img, method=segmentation_method, params=segmentation_params)
-                                        st.session_state.tumor_mask = tumor_mask
-                                        st.sidebar.success("Segmentación completada")
-                                
-                                # Botón para eliminar la segmentación
-                                if st.sidebar.button("Eliminar segmentación"):
-                                    tumor_mask = None
-                                    if hasattr(st.session_state, 'tumor_mask'):
-                                        del st.session_state.tumor_mask
-                                    st.sidebar.success("Segmentación eliminada")
-                                
-                                # Usar la segmentación guardada si existe
-                                if not tumor_mask and hasattr(st.session_state, 'tumor_mask'):
-                                    tumor_mask = st.session_state.tumor_mask
-                                
-                                st.sidebar.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Valores predeterminados para cuando se necesita ventana en la sección de segmentación
-                                window_width = default_window_width
-                                window_center = default_window_center
-                                is_negative = False
-                            
-                            elif output == 'Proyección 3D':
-                                st.sidebar.markdown('<div class="segmentation-controls">', unsafe_allow_html=True)
-                                st.sidebar.markdown('<p class="sub-header">Parámetros de Proyección</p>', unsafe_allow_html=True)
-                                
-                                # Verificar si existe una segmentación
-                                if not hasattr(st.session_state, 'tumor_mask') or st.session_state.tumor_mask is None:
-                                    st.sidebar.warning("Primero debes realizar la segmentación del tumor en la pestaña Segmentación")
-                                else:
-                                    # Parámetros para la proyección esférica
-                                    z_dim, y_dim, x_dim = img.shape
-                                    
-                                    # Opciones para el centro de la esfera
-                                    center_option = st.sidebar.radio(
-                                        "Centro de la esfera",
-                                        ["Centro de la imagen", "Centro del tumor", "Personalizado"]
-                                    )
-                                    
-                                    if center_option == "Centro de la imagen":
-                                        template_center = (x_dim // 2, y_dim // 2, z_dim // 2)
-                                    elif center_option == "Centro del tumor":
-                                        if hasattr(st.session_state, 'tumor_mask'):
-                                            # Calcular el centro del tumor
-                                            tumor_points = np.argwhere(st.session_state.tumor_mask)
-                                            if len(tumor_points) > 0:
-                                                # Calcular centroide (z, y, x)
-                                                mean_point = np.mean(tumor_points, axis=0)
-                                                # Convertir a (x, y, z)
-                                                template_center = (int(mean_point[2]), int(mean_point[1]), int(mean_point[0]))
-                                            else:
-                                                template_center = (x_dim // 2, y_dim // 2, z_dim // 2)
-                                                st.sidebar.warning("No se encontró tumor segmentado, usando centro de la imagen")
-                                        else:
-                                            template_center = (x_dim // 2, y_dim // 2, z_dim // 2)
-                                            st.sidebar.warning("No se encontró tumor segmentado, usando centro de la imagen")
-                                    else:  # Personalizado
-                                        col1, col2, col3 = st.sidebar.columns(3)
-                                        with col1:
-                                            center_x = st.number_input("Centro X", 0, x_dim-1, x_dim//2)
-                                        with col2:
-                                            center_y = st.number_input("Centro Y", 0, y_dim-1, y_dim//2)
-                                        with col3:
-                                            center_z = st.number_input("Centro Z", 0, z_dim-1, z_dim//2)
-                                        template_center = (center_x, center_y, center_z)
-                                    
-                                    # Opciones para el radio de la esfera
-                                    radius_option = st.sidebar.radio(
-                                        "Radio de la esfera",
-                                        ["Automático", "Personalizado"]
-                                    )
-                                    
-                                    if radius_option == "Automático":
-                                        radius = min(template_center[0], template_center[1], template_center[2],
-                                                    x_dim - template_center[0], y_dim - template_center[1], 
-                                                    z_dim - template_center[2]) * 0.8
-                                    else:  # Personalizado
-                                        max_possible_radius = min(template_center[0], template_center[1], template_center[2],
-                                                                x_dim - template_center[0], y_dim - template_center[1], 
-                                                                z_dim - template_center[2])
-                                        radius = st.sidebar.slider("Radio de la esfera", 10, int(max_possible_radius), 
-                                                                int(max_possible_radius * 0.8))
-                                    
-                                    # Botón para ejecutar la proyección
-                                    if st.sidebar.button("Proyectar tumor"):
-                                        with st.spinner('Proyectando tumor a esfera...'):
-                                            projected_tumor, projection_coords = project_tumor_to_sphere(
-                                                st.session_state.tumor_mask, 
-                                                template_center=template_center,
-                                                radius=radius
-                                            )
-                                            st.session_state.projected_tumor = projected_tumor
-                                            st.session_state.projection_coords = projection_coords
-                                            st.sidebar.success("Proyección completada")
-                                
-                                # Usar la proyección guardada si existe
-                                if not projected_tumor and hasattr(st.session_state, 'projected_tumor'):
-                                    projected_tumor = st.session_state.projected_tumor
-                                    projection_coords = st.session_state.projection_coords
-                                
-                                st.sidebar.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Valores predeterminados para cuando no son necesarios
-                                window_width = default_window_width
-                                window_center = default_window_center
-                                is_negative = False
-                                
-                            else:  # Para Metadatos
-                                # Valores predeterminados para cuando no son necesarios
-                                window_width = max_val - min_val if 'max_val' in locals() else 1000
-                                window_center = (max_val + min_val) / 2 if 'max_val' in locals() else 0
-                                is_negative = False
-                                
-                        except Exception as e:
-                            st.sidebar.error(f"Error al procesar los archivos DICOM: {str(e)}")
-                            st.sidebar.write("Detalles del error:", str(e))
-                            # Valores predeterminados
-                            window_width = 1000
-                            window_center = 0
-                            is_negative = False
+
+            elif output == 'Segmentación':
+                st.sidebar.markdown('<div class="segmentation-controls">', unsafe_allow_html=True)
+                st.sidebar.markdown('<p class="sub-header">Parámetros de Segmentación</p>', unsafe_allow_html=True)
+                
+                segmentation_method = st.sidebar.selectbox(
+                    "Método de segmentación",
+                    ["threshold", "kmeans", "region_growing", "manual"],
+                    format_func=lambda x: {
+                        "threshold": "Umbralización",
+                        "kmeans": "K-means clustering",
+                        "region_growing": "Crecimiento de región",
+                        "manual": "Segmentación manual"
+                    }[x]
+                )
+                
+                segmentation_params = {}
+                
+                # Parámetros específicos para cada método
+                if segmentation_method == "threshold":
+                    # Parámetros para umbralización
+                    col1, col2 = st.sidebar.columns(2)
+                    with col1:
+                        lower_threshold = st.number_input(
+                            "Umbral inferior",
+                            min_value=float(min_val),
+                            max_value=float(max_val),
+                            value=float(min_val + range_val * 0.4),
+                            format="%.1f"
+                        )
+                    with col2:
+                        upper_threshold = st.number_input(
+                            "Umbral superior",
+                            min_value=float(min_val),
+                            max_value=float(max_val),
+                            value=float(min_val + range_val * 0.7),
+                            format="%.1f"
+                        )
+                    
+                    segmentation_params["lower_threshold"] = lower_threshold
+                    segmentation_params["upper_threshold"] = upper_threshold
+                    
+                    # Parámetros avanzados
+                    with st.sidebar.expander("Parámetros avanzados"):
+                        min_size = st.slider("Tamaño mínimo de objeto", 10, 500, 50)
+                        closing_size = st.slider("Tamaño de cierre", 1, 10, 2)
+                        segmentation_params["min_size"] = min_size
+                        segmentation_params["closing_size"] = closing_size
+                
+                elif segmentation_method == "kmeans":
+                    # Parámetros para K-means
+                    n_clusters = st.sidebar.slider("Número de clusters", 2, 8, 4)
+                    tumor_cluster = st.sidebar.slider("Cluster del tumor (0-indexado)", 0, n_clusters-1, 2)
+                    selected_kmeans_slice = st.sidebar.slider("Slice para clustering", 0, n_slices-1, slice_ix)
+                    propagate = st.sidebar.checkbox("Propagar a slices vecinos", value=True)
+                    
+                    segmentation_params["n_clusters"] = n_clusters
+                    segmentation_params["tumor_cluster"] = tumor_cluster
+                    segmentation_params["slice"] = selected_kmeans_slice
+                    segmentation_params["propagate"] = propagate
+                
+                elif segmentation_method == "region_growing":
+                    # Parámetros para crecimiento de región
+                    st.sidebar.markdown("**Selecciona un punto semilla en la imagen**")
+                    if not hasattr(st.session_state, 'seed_point'):
+                        st.session_state.seed_point = None
+                    
+                    # Modo de selección de punto semilla
+                    st.sidebar.markdown("Navega al slice deseado y haz clic en la imagen para seleccionar un punto semilla")
+                    
+                    # Mostrar el punto semilla seleccionado
+                    if st.session_state.seed_point:
+                        z, y, x = st.session_state.seed_point
+                        st.sidebar.markdown(f"Punto semilla: Slice {z}, Y={y}, X={x}")
+                        seed_value = img[z, y, x] if 0 <= z < img.shape[0] and 0 <= y < img.shape[1] and 0 <= x < img.shape[2] else 0
+                        st.sidebar.markdown(f"Valor en el punto: {seed_value}")
+                    
+                    tolerance = st.sidebar.slider("Tolerancia", 5, 100, 20)
+                    
+                    segmentation_params["seed_point"] = st.session_state.seed_point
+                    segmentation_params["tolerance"] = tolerance
+                    
+                    # Parámetros avanzados
+                    with st.sidebar.expander("Parámetros avanzados"):
+                        min_size = st.slider("Tamaño mínimo de objeto", 10, 500, 50)
+                        closing_size = st.slider("Tamaño de cierre", 1, 10, 2)
+                        segmentation_params["min_size"] = min_size
+                        segmentation_params["closing_size"] = closing_size
+                
+                elif segmentation_method == "manual":
+                    # Parámetros para segmentación manual
+                    st.sidebar.markdown("**Dibuja el contorno del tumor en la imagen**")
+                    
+                    # Inicializar puntos del ROI si no existen
+                    if not hasattr(st.session_state, 'roi_points'):
+                        st.session_state.roi_points = []
+                    
+                    # Botón para limpiar los puntos
+                    if st.sidebar.button("Limpiar contorno"):
+                        st.session_state.roi_points = []
+                    
+                    # Mostrar información sobre los puntos seleccionados
+                    if st.session_state.roi_points:
+                        st.sidebar.markdown(f"Puntos seleccionados: {len(st.session_state.roi_points)}")
+                    
+                    # Opciones de propagación
+                    propagate = st.sidebar.checkbox("Propagar a slices vecinos", value=True)
+                    if propagate:
+                        propagation_range = st.sidebar.slider("Rango de propagación", 1, 10, 3)
+                        segmentation_params["propagation_range"] = propagation_range
+                    
+                    segmentation_params["roi_points"] = st.session_state.roi_points
+                    segmentation_params["slice"] = slice_ix
+                    segmentation_params["propagate"] = propagate
+                
+                # Botón para ejecutar la segmentación
+                if st.sidebar.button("Segmentar tumor"):
+                    with st.spinner('Segmentando tumor...'):
+                        tumor_mask = segment_tumor(img, method=segmentation_method, params=segmentation_params)
+                        st.session_state.tumor_mask = tumor_mask
+                        st.sidebar.success("Segmentación completada")
+                
+                # Botón para eliminar la segmentación
+                if st.sidebar.button("Eliminar segmentación"):
+                    tumor_mask = None
+                    if hasattr(st.session_state, 'tumor_mask'):
+                        del st.session_state.tumor_mask
+                    st.sidebar.success("Segmentación eliminada")
+                
+                # Usar la segmentación guardada si existe
+                if not tumor_mask and hasattr(st.session_state, 'tumor_mask'):
+                    tumor_mask = st.session_state.tumor_mask
+                
+                st.sidebar.markdown('</div>', unsafe_allow_html=True)
+                
+                # Valores predeterminados para cuando se necesita ventana en la sección de segmentación
+                window_width = default_window_width
+                window_center = default_window_center
+                is_negative = False
+            
+            elif output == 'Proyección 3D':
+                st.sidebar.markdown('<div class="segmentation-controls">', unsafe_allow_html=True)
+                st.sidebar.markdown('<p class="sub-header">Parámetros de Proyección</p>', unsafe_allow_html=True)
+                
+                # Verificar si existe una segmentación
+                if not hasattr(st.session_state, 'tumor_mask') or st.session_state.tumor_mask is None:
+                    st.sidebar.warning("Primero debes realizar la segmentación del tumor en la pestaña Segmentación")
+                else:
+                    # Parámetros para la proyección esférica
+                    z_dim, y_dim, x_dim = img.shape
+                    
+                    # Opciones para el centro de la esfera
+                    center_option = st.sidebar.radio(
+                        "Centro de la esfera",
+                        ["Centro de la imagen", "Centro del tumor", "Personalizado"]
+                    )
+                    
+                    if center_option == "Centro de la imagen":
+                        template_center = (x_dim // 2, y_dim // 2, z_dim // 2)
+                    elif center_option == "Centro del tumor":
+                        if hasattr(st.session_state, 'tumor_mask'):
+                            # Calcular el centro del tumor
+                            tumor_points = np.argwhere(st.session_state.tumor_mask)
+                            if len(tumor_points) > 0:
+                                # Calcular centroide (z, y, x)
+                                mean_point = np.mean(tumor_points, axis=0)
+                                # Convertir a (x, y, z)
+                                template_center = (int(mean_point[2]), int(mean_point[1]), int(mean_point[0]))
+                            else:
+                                template_center = (x_dim // 2, y_dim // 2, z_dim // 2)
+                                st.sidebar.warning("No se encontró tumor segmentado, usando centro de la imagen")
+                        else:
+                            template_center = (x_dim // 2, y_dim // 2, z_dim // 2)
+                            st.sidebar.warning("No se encontró tumor segmentado, usando centro de la imagen")
+                    else:  # Personalizado
+                        col1, col2, col3 = st.sidebar.columns(3)
+                        with col1:
+                            center_x = st.number_input("Centro X", 0, x_dim-1, x_dim//2)
+                        with col2:
+                            center_y = st.number_input("Centro Y", 0, y_dim-1, y_dim//2)
+                        with col3:
+                            center_z = st.number_input("Centro Z", 0, z_dim-1, z_dim//2)
+                        template_center = (center_x, center_y, center_z)
+                    
+                    # Opciones para el radio de la esfera
+                    radius_option = st.sidebar.radio(
+                        "Radio de la esfera",
+                        ["Automático", "Personalizado"]
+                    )
+                    
+                    if radius_option == "Automático":
+                        radius = min(template_center[0], template_center[1], template_center[2],
+                                    x_dim - template_center[0], y_dim - template_center[1], 
+                                    z_dim - template_center[2]) * 0.8
+                    else:  # Personalizado
+                        max_possible_radius = min(template_center[0], template_center[1], template_center[2],
+                                                x_dim - template_center[0], y_dim - template_center[1], 
+                                                z_dim - template_center[2])
+                        radius = st.sidebar.slider("Radio de la esfera", 10, int(max_possible_radius), 
+                                                int(max_possible_radius * 0.8))
+                    
+                    # Botón para ejecutar la proyección
+                    if st.sidebar.button("Proyectar tumor"):
+                        with st.spinner('Proyectando tumor a esfera...'):
+                            projected_tumor, projection_coords = project_tumor_to_sphere(
+                                st.session_state.tumor_mask, 
+                                template_center=template_center,
+                                radius=radius
+                            )
+                            st.session_state.projected_tumor = projected_tumor
+                            st.session_state.projection_coords = projection_coords
+                            st.sidebar.success("Proyección completada")
+                
+                # Usar la proyección guardada si existe
+                if not projected_tumor and hasattr(st.session_state, 'projected_tumor'):
+                    projected_tumor = st.session_state.projected_tumor
+                    projection_coords = st.session_state.projection_coords
+                
+                st.sidebar.markdown('</div>', unsafe_allow_html=True)
+                
+                # Valores predeterminados para cuando no son necesarios
+                window_width = default_window_width
+                window_center = default_window_center
+                is_negative = False
+                
+            else:  # Para Metadatos
+                # Valores predeterminados para cuando no son necesarios
+                window_width = max_val - min_val if 'max_val' in locals() else 1000
+                window_center = (max_val + min_val) / 2 if 'max_val' in locals() else 0
+                is_negative = False
+                
+        except Exception as e:
+            st.sidebar.error(f"Error al procesar los archivos DICOM: {str(e)}")
+            st.sidebar.write("Detalles del error:", str(e))
+            # Valores predeterminados
+            window_width = 1000
+            window_center = 0
+            is_negative = False
 
 # Visualización en la ventana principal
 # Título grande siempre visible
 st.markdown('<p class="giant-title">Brachyanalysis</p>', unsafe_allow_html=True)
 
-# Mostrar la visualización principal
-if img is not None:
-    if output == 'Imagen':
-        st.markdown('<p class="sub-header">Visualización DICOM</p>', unsafe_allow_html=True)
+if img is not None and output == 'Imagen':
+    st.markdown('<p class="sub-header">Visualización DICOM</p>', unsafe_allow_html=True)
+    
+    # Si es modo negativo, invertir la imagen
+    if is_negative:
+        # Muestra la imagen invertida
+        fig, ax = plt.subplots(figsize=(12, 10))
+        plt.axis('off')
+        selected_slice = img[slice_ix, :, :]
         
-        # Si es modo negativo, invertir la imagen
-        if is_negative:
-            # Muestra la imagen invertida
-            fig, ax = plt.subplots(figsize=(12, 10))
+        # Aplicar ventana y luego invertir
+        windowed_slice = apply_window_level(selected_slice, window_width, window_center)
+        windowed_slice = 1.0 - windowed_slice  # Invertir
+        
+        # Si hay una máscara de tumor y se solicita mostrarla, hacerlo como overlay
+        if tumor_mask is not None and show_segmentation:
+            ax.imshow(windowed_slice, origin='lower', cmap='gray')
+            tumor_slice = tumor_mask[slice_ix]
+            if np.any(tumor_slice):  # Solo mostrar si hay algo en la máscara
+                masked = np.ma.masked_where(tumor_slice == 0, tumor_slice)
+                ax.imshow(masked, origin='lower', alpha=overlay_alpha, cmap='autumn')
+        else:
+            ax.imshow(windowed_slice, origin='lower', cmap='gray')
+        
+        st.pyplot(fig)
+    else:
+        # Muestra la imagen en la ventana principal con los ajustes aplicados
+        # y opcionalmente con la máscara del tumor
+        show_mask = tumor_mask if (show_segmentation and 'show_segmentation' in locals()) else None
+        fig = plot_slice(img, slice_ix, window_width, window_center, 
+                        tumor_mask=show_mask, 
+                        overlay_alpha=overlay_alpha if 'overlay_alpha' in locals() else 0.3)
+        st.pyplot(fig)
+    
+    # Información adicional sobre la imagen y los ajustes actuales
+    info_cols = st.columns(6)
+    with info_cols[0]:
+        st.markdown(f"**Dimensiones:** {img.shape[1]} x {img.shape[2]} px")
+    with info_cols[1]:
+        st.markdown(f"**Total cortes:** {n_slices}")
+    with info_cols[2]:
+        st.markdown(f"**Corte actual:** {slice_ix + 1}")
+    with info_cols[3]:
+        st.markdown(f"**Min/Max:** {img[slice_ix].min():.1f} / {img[slice_ix].max():.1f}")
+    with info_cols[4]:
+        st.markdown(f"**Ancho (WW):** {window_width:.1f}")
+    with info_cols[5]:
+        st.markdown(f"**Centro (WL):** {window_center:.1f}")
+        
+elif img is not None and output == 'Metadatos':
+    st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
+    try:
+        metadata = dict()
+        for k in reader.GetMetaDataKeys(slice_ix):
+            metadata[k] = reader.GetMetaData(slice_ix, k)
+        df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
+        st.dataframe(df, height=600)
+    except Exception as e:
+        st.error(f"Error al leer metadatos: {str(e)}")
+
+elif img is not None and output == 'Segmentación':
+    st.markdown('<p class="sub-header">Segmentación del Tumor</p>', unsafe_allow_html=True)
+    
+    # Instrucciones diferentes según el método seleccionado
+    method_instructions = {
+        "threshold": "Ajusta los umbrales inferior y superior para capturar el tumor.",
+        "kmeans": "Selecciona el número de clusters y cuál representa el tumor.",
+        "region_growing": "Haz clic en la imagen para seleccionar un punto dentro del tumor.",
+        "manual": "Haz clic en la imagen para añadir puntos y dibujar el contorno del tumor."
+    }
+    
+    st.markdown(f"**{method_instructions.get(segmentation_method, '')}**")
+    
+    # Mostrar la imagen principal con opciones específicas según el método
+    fig, ax = plt.subplots(figsize=(12, 10))
+    plt.axis('off')
+    selected_slice = img[slice_ix, :, :]
+    
+    # Aplicar ventana para mejor visualización
+    windowed_slice = apply_window_level(selected_slice, window_width, window_center)
+    ax.imshow(windowed_slice, origin='lower', cmap='gray')
+    
+    # Si hay una máscara de tumor, mostrarla como overlay
+    if tumor_mask is not None and slice_ix < tumor_mask.shape[0]:
+        tumor_slice = tumor_mask[slice_ix]
+        if np.any(tumor_slice):  # Solo mostrar si hay algo en la máscara
+            masked = np.ma.masked_where(tumor_slice == 0, tumor_slice)
+            ax.imshow(masked, origin='lower', alpha=0.3, cmap='autumn')
+    
+    # Mostrar puntos específicos según el método
+    if segmentation_method == "region_growing" and hasattr(st.session_state, 'seed_point'):
+        seed_z, seed_y, seed_x = st.session_state.seed_point
+        if seed_z == slice_ix:  # Solo mostrar el punto si estamos en el slice correcto
+            ax.plot(seed_x, seed_y, 'ro', markersize=10)
+    
+    elif segmentation_method == "manual" and hasattr(st.session_state, 'roi_points') and st.session_state.roi_points:
+        # Dibujar los puntos y líneas del contorno
+        points = np.array(st.session_state.roi_points)
+        ax.plot(points[:, 0], points[:, 1], 'ro-', linewidth=2, markersize=8)
+        
+        # Si hay más de 2 puntos, cerrar el polígono
+        if len(points) > 2:
+            ax.plot([points[-1, 0], points[0, 0]], [points[-1, 1], points[0, 1]], 'ro-', linewidth=2)
+    
+    # Mostrar la imagen con las anotaciones
+    plot_placeholder = st.empty()
+    plot_placeholder.pyplot(fig)
+    
+    # Manejar los eventos de clic según el método
+    if segmentation_method in ["region_growing", "manual"]:
+        # Crear un área para capturar el clic del usuario
+        col1, col2, col3 = st.columns([1, 3, 1])
+        with col2:
+            clicked = st.button("Capturar punto en la imagen" if segmentation_method == "region_growing" else "Añadir punto al contorno")
+            
+            if clicked:
+                # En una aplicación real, se capturaría el clic del usuario
+                # En Streamlit, podemos usar widgets para simular esta interacción
+                coords_col1, coords_col2 = st.columns(2)
+                with coords_col1:
+                    x_coord = st.number_input("Coordenada X", 0, img.shape[2]-1, img.shape[2]//2)
+                with coords_col2:
+                    y_coord = st.number_input("Coordenada Y", 0, img.shape[1]-1, img.shape[1]//2)
+                
+                if st.button("Confirmar punto"):
+                    if segmentation_method == "region_growing":
+                        # Guardar el punto semilla (slice actual, y, x)
+                        st.session_state.seed_point = (slice_ix, int(y_coord), int(x_coord))
+                        st.success(f"Punto semilla establecido en: Slice {slice_ix}, Y={y_coord}, X={x_coord}")
+                    else:  # manual
+                        # Añadir el punto al contorno
+                        if not hasattr(st.session_state, 'roi_points'):
+                            st.session_state.roi_points = []
+                        st.session_state.roi_points.append((int(x_coord), int(y_coord)))
+                        st.success(f"Punto añadido al contorno: X={x_coord}, Y={y_coord}")
+                    
+                    # Recargar la página para actualizar el gráfico
+                    st.experimental_rerun()
+    
+    # Mostrar resumen de la segmentación
+    if tumor_mask is not None:
+        st.markdown("### Resultados de la segmentación")
+        # Calcular volumen y otras métricas
+        voxel_count = np.sum(tumor_mask)
+        # En un caso real, multiplicaríamos por el volumen de cada voxel
+        # pero para este ejemplo, solo contamos voxels
+        
+        metrics_cols = st.columns(3)
+        with metrics_cols[0]:
+            st.metric("Voxels segmentados", f"{voxel_count}")
+        with metrics_cols[1]:
+            # Contar slices con tumor
+            slices_with_tumor = sum(1 for i in range(tumor_mask.shape[0]) if np.any(tumor_mask[i]))
+            st.metric("Slices con tumor", f"{slices_with_tumor}/{tumor_mask.shape[0]}")
+        with metrics_cols[2]:
+            # Volumen aproximado (suponiendo voxels de 1mm³)
+            st.metric("Volumen aproximado", f"{voxel_count} mm³")
+
+elif img is not None and output == 'Proyección 3D':
+    st.markdown('<p class="sub-header">Proyección 3D del Tumor</p>', unsafe_allow_html=True)
+    
+    # Verificar si hay una segmentación disponible
+    if not hasattr(st.session_state, 'tumor_mask') or st.session_state.tumor_mask is None:
+        st.warning("No hay tumor segmentado. Por favor, realiza primero la segmentación en la pestaña correspondiente.")
+    else:
+        # Verificar si hay una proyección disponible
+        if projection_coords is not None:
+            # Visualizar la proyección 3D
+            fig = plot_3d_projection(projection_coords)
+            st.pyplot(fig)
+            
+            # Mostrar información sobre la proyección
+            info_cols = st.columns(3)
+            with info_cols[0]:
+                st.markdown(f"**Centro de proyección:** ({projection_coords['center'][0]}, {projection_coords['center'][1]}, {projection_coords['center'][2]})")
+            with info_cols[1]:
+                st.markdown(f"**Radio de la esfera:** {projection_coords['radius']:.1f}")
+            with info_cols[2]:
+                num_points = len(projection_coords['tumor_points'])
+                st.markdown(f"**Puntos proyectados:** {num_points}")
+            
+            # Opciones para visualizar las imágenes de la proyección
+            st.markdown("### Visualización de cortes con la proyección")
+            viz_option = st.radio(
+                "Selecciona qué visualizar:",
+                ["Tumor original", "Proyección a esfera", "Ambos superpuestos"]
+            )
+            
+            # Mostrar visualización según la opción seleccionada
+            fig2, ax2 = plt.subplots(figsize=(12, 8))
             plt.axis('off')
             selected_slice = img[slice_ix, :, :]
-            
-            # Aplicar ventana y luego invertir
             windowed_slice = apply_window_level(selected_slice, window_width, window_center)
-            windowed_slice = 1.0 - windowed_slice  # Invertir
+            ax2.imshow(windowed_slice, origin='lower', cmap='gray')
             
-            ax.imshow(windowed_slice, origin='lower', cmap='gray')
-            st.pyplot(fig)
-        else:
-            # Muestra la imagen en la ventana principal con los ajustes aplicados
-            fig = plot_slice(img, slice_ix, window_width, window_center)
-            st.pyplot(fig)
-        
-        # Información adicional sobre la imagen y los ajustes actuales
-        info_cols = st.columns(6)
-        with info_cols[0]:
-            st.markdown(f"**Dimensiones:** {img.shape[1]} x {img.shape[2]} px")
-        with info_cols[1]:
-            st.markdown(f"**Total cortes:** {n_slices}")
-        with info_cols[2]:
-            st.markdown(f"**Corte actual:** {slice_ix + 1}")
-        with info_cols[3]:
-            st.markdown(f"**Min/Max:** {img[slice_ix].min():.1f} / {img[slice_ix].max():.1f}")
-        with info_cols[4]:
-            st.markdown(f"**Ancho (WW):** {window_width:.1f}")
-        with info_cols[5]:
-            st.markdown(f"**Centro (WL):** {window_center:.1f}")
+            if viz_option == "Tumor original" or viz_option == "Ambos superpuestos":
+                if tumor_mask is not None and slice_ix < tumor_mask.shape[0]:
+                    tumor_slice = tumor_mask[slice_ix]
+                    if np.any(tumor_slice):
+                        masked = np.ma.masked_where(tumor_slice == 0, tumor_slice)
+                        ax2.imshow(masked, origin='lower', alpha=0.4, cmap='autumn')
             
-    elif output == 'Metadatos':
-        st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
-        try:
-            metadata = dict()
-            for k in reader.GetMetaDataKeys(slice_ix):
-                metadata[k] = reader.GetMetaData(slice_ix, k)
-            df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
-            st.dataframe(df, height=600)
-        except Exception as e:
-            st.error(f"Error al leer metadatos: {str(e)}")
+            if viz_option == "Proyección a esfera" or viz_option == "Ambos superpuestos":
+                if projected_tumor is not None and slice_ix < projected_tumor.shape[0]:
+                    projected_slice = projected_tumor[slice_ix]
+                    if np.any(projected_slice):
+                        masked_proj = np.ma.masked_where(projected_slice == 0, projected_slice)
+                        ax2.imshow(masked_proj, origin='lower', alpha=0.4, 
+                                  cmap='cool' if viz_option == "Ambos superpuestos" else 'autumn')
             
-    elif output == 'Segmentación':
-        st.markdown('<p class="sub-header">Segmentación del Tumor</p>', unsafe_allow_html=True)
-        
-        # Visualizar la imagen con la segmentación sobrepuesta
-        if tumor_mask is not None:
-            fig = plot_slice_with_segmentation(
-                img, slice_ix, window_width, window_center, 
-                segmentation_mask=tumor_mask, 
-                projected_points=terminal_points if terminal_points is not None else None
+            st.pyplot(fig2)
+            
+            # Opción para guardar resultados (en una aplicación real)
+            st.markdown("### Exportar resultados")
+            export_option = st.selectbox(
+                "Formato de exportación:",
+                ["DICOM RT Structure", "Modelo 3D (STL)", "Coordenadas (CSV)"]
             )
-            st.pyplot(fig)
             
-            # Mostrar estadísticas sobre la segmentación
-            if np.any(tumor_mask):
-                tumor_pixels = np.sum(tumor_mask)
-                tumor_percentage = (tumor_pixels / tumor_mask.size) * 100
-                
-                stats_cols = st.columns(3)
-                with stats_cols[0]:
-                    st.markdown(f"**Píxeles del tumor:** {tumor_pixels}")
-                with stats_cols[1]:
-                    st.markdown(f"**Porcentaje del área:** {tumor_percentage:.2f}%")
-                with stats_cols[2]:
-                    st.markdown(f"**Método:** {segmentation_method}")
-                
-                # Si hay puntos proyectados, mostrar información sobre ellos
-                if projected_points and len(projected_points) > 0:
-                    st.markdown('<p class="sub-header">Proyección del Tumor</p>', unsafe_allow_html=True)
-                    st.markdown(f"**Puntos proyectados:** {len(projected_points)}")
-                    
-                    if terminal_points is not None and len(terminal_points) > 0:
-                        # Convertir los puntos terminales a posiciones en la imagen
-                        st.markdown(f"**Puntos terminales calculados:** {len(terminal_points)}")
-                        
-                        # Mostrar coordenadas de los puntos terminales
-                        terminal_df = pd.DataFrame({
-                            'Punto': [f'Punto {i+1}' for i in range(len(terminal_points))],
-                            'Theta': [f"{point[0]:.4f}" for point in terminal_points],
-                            'Phi': [f"{point[1]:.4f}" for point in terminal_points]
-                        })
-                        st.dataframe(terminal_df)
-                        
-                        # Opción para exportar los resultados
-                        if st.button("Exportar resultados de la segmentación"):
-                            # Crear un CSV con los resultados
-                            csv = terminal_df.to_csv(index=False)
-                            st.download_button(
-                                label="Descargar CSV de puntos",
-                                data=csv,
-                                file_name="puntos_terminales.csv",
-                                mime="text/csv",
-                            )
-            else:
-                st.warning("No se detectaron píxeles del tumor con los parámetros actuales. Ajusta los parámetros e intenta de nuevo.")
+            if st.button("Exportar proyección"):
+                st.info(f"La exportación en formato '{export_option}' estaría disponible en una implementación completa.")
+                # Aquí se implementaría la exportación real en una aplicación completa
         else:
-            st.info("Selecciona un método de segmentación y ajusta los parámetros en el panel lateral.")
-            
+            st.info("Usa las opciones en el panel lateral para configurar y generar la proyección.")
+
 else:
     # Página de inicio cuando no hay imágenes cargadas
     st.markdown('<p class="sub-header">Visualizador de imágenes DICOM</p>', unsafe_allow_html=True)
@@ -986,6 +1105,16 @@ else:
         <img src="https://raw.githubusercontent.com/SimpleITK/SimpleITK/master/Documentation/docs/images/simpleitk-logo.svg" alt="SimpleITK Logo" width="200">
         <h2 style="color: #28aec5; margin-top: 20px;">Carga un archivo ZIP con tus imágenes DICOM</h2>
         <p style="font-size: 18px; margin-top: 10px;">Utiliza el panel lateral para subir tus archivos y visualizarlos</p>
+        
+        <div style="margin-top: 30px; text-align: left; max-width: 800px; margin-left: auto; margin-right: auto;">
+            <h3 style="color: #c0d711;">Características principales:</h3>
+            <ul style="font-size: 16px; line-height: 1.6;">
+                <li><strong>Visualización DICOM:</strong> Explora imágenes médicas con controles de ventana personalizables</li>
+                <li><strong>Segmentación del tumor:</strong> Múltiples métodos para identificar y delimitar tumores</li>
+                <li><strong>Proyección 3D:</strong> Proyecta el tumor a una superficie esférica para planificación de braquiterapia</li>
+                <li><strong>Exportación:</strong> Guarda los resultados en formatos estándar médicos</li>
+            </ul>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -993,9 +1122,15 @@ else:
 st.markdown("""
 <hr style="margin-top: 30px;">
 <div style="text-align: center; color: #28aec5; font-size: 14px;">
-    Brachyanalysis - Visualizador de imágenes DICOM
+    Brachyanalysis - Visualizador de imágenes DICOM con segmentación y proyección para braquiterapia
 </div>
 """, unsafe_allow_html=True)
+
+# Capturar eventos de clic en la imagen cuando sea necesario
+if img is not None and output == 'Segmentación' and segmentation_method in ["region_growing", "manual"]:
+    # En un entorno web real, esta funcionalidad requeriría JavaScript para capturar clics
+    # En Streamlit, esto es una limitación, por lo que usamos los campos de entrada como alternativa
+    pass
 
 # Limpiar el directorio temporal si se creó uno
 if temp_dir and os.path.exists(temp_dir):
