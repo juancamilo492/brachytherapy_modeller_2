@@ -800,7 +800,7 @@ if img is not None:
                     st.markdown(f"**Método:** {segmentation_method}")
                 
                 # Si hay puntos proyectados, mostrar información sobre ellos
-                if projected_points and len(projected_points) > 0:
+                if projected_points is not None and np.size(projected_points) > 0:
                     st.markdown('<p class="sub-header">Proyección del Tumor</p>', unsafe_allow_html=True)
                     st.markdown(f"**Puntos proyectados:** {len(projected_points)}")
                     
