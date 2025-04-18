@@ -14,7 +14,8 @@ from torchvision import transforms
 import monai
 from monai.networks.nets import UNet
 from monai.transforms import (
-    AddChannel, ScaleIntensity, ToTensor, Compose, LoadImage,
+    Compose, LoadImage, 
+    EnsureChannelFirst, ScaleIntensityRange, ToTensor,
     Orientation, Spacing, Resize, AsDiscrete
 )
 from monai.transforms.compose import MapTransform
@@ -24,11 +25,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import binary_erosion, binary_dilation
 
-class AddChanneld(MapTransform):
+class EnsureChannelFirstd(MapTransform):
     def __call__(self, data):
         d = dict(data)
         for key in self.keys:
-            d[key] = AddChannel()(d[key])
+            d[key] = EnsureChannelFirst()(d[key])
         return d
 
 class ScaleIntensityd(MapTransform):
@@ -40,7 +41,7 @@ class ScaleIntensityd(MapTransform):
     def __call__(self, data):
         d = dict(data)
         for key in self.keys:
-            d[key] = ScaleIntensity(minv=self.minv, maxv=self.maxv)(d[key])
+            d[key] = ScaleIntensityRange(a_min=self.minv, a_max=self.maxv)(d[key])
         return d
 
 class ToTensord(MapTransform):
@@ -48,6 +49,18 @@ class ToTensord(MapTransform):
         d = dict(data)
         for key in self.keys:
             d[key] = ToTensor()(d[key])
+        return d
+
+class Resized(MapTransform):
+    def __init__(self, keys, spatial_size):
+        super().__init__(keys)
+        self.spatial_size = spatial_size
+        self.resize = Resize(spatial_size=spatial_size)
+    
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.keys:
+            d[key] = self.resize(d[key])
         return d
 
 
@@ -244,7 +257,7 @@ def load_models():
 # Pipeline de transformaciones para preprocesar la imagen para segmentación
 def get_transform_pipeline():
     return Compose([
-        AddChanneld(keys=["image"]),
+        EnsureChannelFirstd(keys=["image"]),
         ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         Resized(keys=["image"], spatial_size=(128, 128, 128)),
         ToTensord(keys=["image"])
