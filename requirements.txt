@@ -3,7 +3,7 @@ pandas
 matplotlib
 SimpleITK
 numpy
-monai
+monai==0.9.0
 torch
 torchvision
 scipy
