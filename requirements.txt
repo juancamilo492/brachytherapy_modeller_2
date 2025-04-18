@@ -3,9 +3,8 @@ pandas
 matplotlib
 SimpleITK
 numpy
-scikit-image
-opencv-python
-scikit-learn
+monai
+torch
+torchvision
 scipy
-zipfile36
-opencv-python-headless
+plotly
