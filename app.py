@@ -7,67 +7,14 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 import SimpleITK as sitk
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import transforms
-import monai
-from monai.networks.nets import UNet
-from monai.transforms import (
-    Compose, LoadImage, 
-    EnsureChannelFirst, ScaleIntensityRange, ToTensor,
-    Orientation, Spacing, Resize, AsDiscrete
-)
-from monai.transforms.compose import MapTransform
-from monai.data import Dataset, DataLoader
-from monai.inferers import sliding_window_inference
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from scipy.ndimage import binary_erosion, binary_dilation
-
-class EnsureChannelFirstd(MapTransform):
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            d[key] = EnsureChannelFirst()(d[key])
-        return d
-
-class ScaleIntensityd(MapTransform):
-    def __init__(self, keys, minv=0.0, maxv=1.0):
-        super().__init__(keys)
-        self.minv = minv
-        self.maxv = maxv
-    
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            d[key] = ScaleIntensityRange(a_min=self.minv, a_max=self.maxv)(d[key])
-        return d
-
-class ToTensord(MapTransform):
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            d[key] = ToTensor()(d[key])
-        return d
-
-class Resized(MapTransform):
-    def __init__(self, keys, spatial_size):
-        super().__init__(keys)
-        self.spatial_size = spatial_size
-        self.resize = Resize(spatial_size=spatial_size)
-    
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            d[key] = self.resize(d[key])
-        return d
-
+from sklearn.cluster import KMeans
+from scipy.optimize import minimize
+from scipy import ndimage
 
 # Configuración de página y estilo
 st.set_page_config(layout="wide", page_title="Brachyanalysis")
 
-# CSS personalizado (se mantiene el mismo)
+# CSS personalizado para aplicar los colores solicitados
 st.markdown("""
 <style>
     .main-header {
@@ -167,101 +114,241 @@ st.markdown("""
         gap: 10px;
         margin-bottom: 10px;
     }
-    .segmentation-control {
-        background-color: rgba(192, 215, 17, 0.1);
-        padding: 15px;
-        border-radius: 8px;
-        margin-top: 15px;
-    }
-    .tabs-custom {
-        margin-bottom: 20px;
-    }
-    .tabs-custom button {
-        background-color: #f0f0f0;
-        border-radius: 5px 5px 0 0;
-    }
-    .tabs-custom button[aria-selected="true"] {
-        background-color: #28aec5;
-        color: white;
-    }
-    .needle-planning {
-        background-color: rgba(40, 174, 197, 0.05);
-        padding: 20px;
-        border-radius: 8px;
-        margin: 20px 0;
-    }
-    .template-preview {
-        border: 2px solid #c0d711;
-        border-radius: 8px;
-        padding: 15px;
-        margin-top: 20px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# Definición del modelo U-Net para segmentación de tumores cervicales
-class CervixTumorUNet(nn.Module):
-    def __init__(self, n_channels=1, n_classes=2):
-        super(CervixTumorUNet, self).__init__()
-        self.model = UNet(
-            spatial_dims=3,
-            in_channels=n_channels,
-            out_channels=n_classes,
-            channels=(16, 32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
-            num_res_units=2
-        )
+# Funciones para segmentación de tumores
+def threshold_based_segmentation(img_3d, slice_ix, min_threshold=None, max_threshold=None):
+    """
+    Segmenta el tumor basado en umbrales de intensidad
     
-    def forward(self, x):
-        return self.model(x)
-
-# Definición del modelo para la segmentación multi-órganos (OARs)
-class OARsSegmentationModel(nn.Module):
-    def __init__(self, n_channels=1, n_classes=5):  # 5 clases: fondo, vejiga, recto, intestino delgado, colon
-        super(OARsSegmentationModel, self).__init__()
-        self.model = UNet(
-            spatial_dims=3,
-            in_channels=n_channels,
-            out_channels=n_classes,
-            channels=(16, 32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
-            num_res_units=2
-        )
+    Parameters:
+    -----------
+    img_3d : numpy.ndarray
+        Imagen 3D (serie DICOM completa)
+    slice_ix : int
+        Índice del corte actual
+    min_threshold : float
+        Umbral mínimo de intensidad (si es None, se calcula automáticamente)
+    max_threshold : float
+        Umbral máximo de intensidad (si es None, se calcula automáticamente)
     
-    def forward(self, x):
-        return self.model(x)
-
-# Función para cargar los modelos pre-entrenados
-@st.cache_resource
-def load_models():
-    # Modelo para tumores cervicales
-    tumor_model = CervixTumorUNet()
-    try:
-        # En una implementación real, cargarías los pesos pre-entrenados
-        # tumor_model.load_state_dict(torch.load("tumor_model_weights.pth"))
-        pass
-    except:
-        st.warning("Modelo de segmentación de tumores simulado (no se cargaron pesos reales)")
-
-    # Modelo para órganos de riesgo
-    oars_model = OARsSegmentationModel()
-    try:
-        # En una implementación real, cargarías los pesos pre-entrenados
-        # oars_model.load_state_dict(torch.load("oars_model_weights.pth"))
-        pass
-    except:
-        st.warning("Modelo de segmentación de OARs simulado (no se cargaron pesos reales)")
+    Returns:
+    --------
+    mask : numpy.ndarray
+        Máscara binaria del tumor segmentado
+    """
+    # Seleccionar el corte actual
+    img_slice = img_3d[slice_ix].copy()
     
-    return tumor_model, oars_model
+    # Calcular umbrales automáticamente si no son proporcionados
+    if min_threshold is None or max_threshold is None:
+        # Calcular histograma
+        hist, bin_edges = np.histogram(img_slice.flatten(), bins=256)
+        
+        # Suponer que el tumor tiene un rango de intensidad particular
+        # Por defecto, tomamos valores en el rango superior del histograma
+        if min_threshold is None:
+            # Usar el percentil 80 como umbral mínimo por defecto
+            min_threshold = np.percentile(img_slice, 80)
+        
+        if max_threshold is None:
+            # Usar el valor máximo como umbral máximo
+            max_threshold = np.max(img_slice)
+    
+    # Crear máscara binaria basada en umbrales
+    mask = (img_slice >= min_threshold) & (img_slice <= max_threshold)
+    
+    # Procesamiento morfológico para eliminar pequeños objetos y rellenar huecos
+    mask = ndimage.binary_opening(mask, structure=np.ones((3, 3)))
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3)))
+    
+    # Eliminar componentes pequeños (mantener solo los más grandes)
+    labeled_mask, num_features = ndimage.label(mask)
+    if num_features > 0:
+        sizes = ndimage.sum(mask, labeled_mask, range(1, num_features + 1))
+        if len(sizes) > 0:
+            # Mantener solo el componente más grande (asumiendo que es el tumor)
+            largest_component = np.argmax(sizes) + 1
+            mask = labeled_mask == largest_component
+    
+    return mask
 
-# Pipeline de transformaciones para preprocesar la imagen para segmentación
-def get_transform_pipeline():
-    return Compose([
-        EnsureChannelFirstd(keys=["image"]),
-        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
-        Resized(keys=["image"], spatial_size=(128, 128, 128)),
-        ToTensord(keys=["image"])
-    ])
+def region_growing_segmentation(img_3d, slice_ix, seed_point=None, threshold_factor=0.3):
+    """
+    Segmenta el tumor usando el algoritmo de crecimiento de regiones
+    
+    Parameters:
+    -----------
+    img_3d : numpy.ndarray
+        Imagen 3D (serie DICOM completa)
+    slice_ix : int
+        Índice del corte actual
+    seed_point : tuple
+        Punto de inicio (y, x) para el crecimiento. Si es None, se usa el centro de la imagen
+    threshold_factor : float
+        Factor que determina el rango de intensidades aceptables
+    
+    Returns:
+    --------
+    mask : numpy.ndarray
+        Máscara binaria del tumor segmentado
+    """
+    # Seleccionar el corte actual
+    img_slice = img_3d[slice_ix].copy()
+    
+    # Si no se proporciona un punto semilla, usar el centro de la imagen
+    if seed_point is None:
+        seed_point = (img_slice.shape[0] // 2, img_slice.shape[1] // 2)
+    
+    # Obtener el valor de intensidad en el punto semilla
+    seed_intensity = img_slice[seed_point]
+    
+    # Definir umbrales para el crecimiento de regiones
+    lower_threshold = seed_intensity - threshold_factor * seed_intensity
+    upper_threshold = seed_intensity + threshold_factor * seed_intensity
+    
+    # Inicializar la máscara y la cola de píxeles a procesar
+    mask = np.zeros_like(img_slice, dtype=bool)
+    processed = np.zeros_like(img_slice, dtype=bool)
+    
+    # Añadir el punto semilla a la cola
+    points_to_process = [seed_point]
+    mask[seed_point] = True
+    processed[seed_point] = True
+    
+    # Definir movimientos en 4 direcciones (arriba, abajo, izquierda, derecha)
+    neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    
+    # Algoritmo de crecimiento de regiones
+    while points_to_process:
+        y, x = points_to_process.pop(0)
+        
+        for dy, dx in neighbors:
+            new_y, new_x = y + dy, x + dx
+            
+            # Verificar si está dentro de los límites
+            if (0 <= new_y < img_slice.shape[0] and 0 <= new_x < img_slice.shape[1] and
+                not processed[new_y, new_x]):
+                
+                processed[new_y, new_x] = True
+                # Verificar si cumple con los umbrales
+                if lower_threshold <= img_slice[new_y, new_x] <= upper_threshold:
+                    mask[new_y, new_x] = True
+                    points_to_process.append((new_y, new_x))
+    
+    # Procesamiento morfológico para mejorar la segmentación
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3)))
+    
+    return mask
+
+def project_tumor_to_sphere(tumor_mask, img_3d, slice_ix, template_center=None, radius=None):
+    """
+    Proyecta la máscara del tumor a una superficie esférica
+    
+    Parameters:
+    -----------
+    tumor_mask : numpy.ndarray
+        Máscara binaria del tumor segmentado
+    img_3d : numpy.ndarray
+        Imagen 3D completa
+    slice_ix : int
+        Índice del corte actual
+    template_center : tuple
+        Centro de la plantilla (y, x). Si es None, se usa el centro de la imagen
+    radius : float
+        Radio de la esfera. Si es None, se calcula automáticamente
+    
+    Returns:
+    --------
+    projected_points : list
+        Lista de puntos proyectados (theta, phi) donde el tumor está presente
+    """
+    if template_center is None:
+        # Usar el centro de la imagen como centro de la plantilla
+        template_center = (tumor_mask.shape[0] // 2, tumor_mask.shape[1] // 2)
+    
+    # Encontrar los puntos del tumor (donde la máscara es True)
+    tumor_points = np.where(tumor_mask)
+    y_points, x_points = tumor_points
+    
+    if len(y_points) == 0:
+        return []  # No hay puntos del tumor para proyectar
+    
+    # Calcular coordenadas relativas al centro de la plantilla
+    y_rel = y_points - template_center[0]
+    x_rel = x_points - template_center[1]
+    
+    # Si el radio no se proporciona, calcularlo basado en la distancia máxima
+    if radius is None:
+        distances = np.sqrt(y_rel**2 + x_rel**2)
+        radius = np.max(distances) * 1.1  # Añadir un 10% extra
+    
+    # Crear una matriz 3D para representar los puntos en el espacio
+    # La coordenada z es la profundidad en la serie de imágenes
+    z_rel = np.full_like(y_rel, slice_ix - img_3d.shape[0] // 2)
+    
+    # Calcular coordenadas esféricas (r, theta, phi)
+    # r es la distancia desde el origen
+    r = np.sqrt(x_rel**2 + y_rel**2 + z_rel**2)
+    
+    # theta es el ángulo en el plano xy (azimut)
+    theta = np.arctan2(y_rel, x_rel)
+    
+    # phi es el ángulo desde el eje z (elevación)
+    phi = np.arccos(z_rel / np.maximum(r, 1e-10))
+    
+    # Proyectar a la superficie de la esfera (r = radius)
+    projected_points = [(t, p) for t, p in zip(theta, phi)]
+    
+    return projected_points
+
+def calculate_terminal_points(projected_points, num_needles=9):
+    """
+    Calcula los puntos terminales óptimos usando k-means clustering
+    
+    Parameters:
+    -----------
+    projected_points : list
+        Lista de puntos proyectados (theta, phi)
+    num_needles : int
+        Número de agujas (clusters) a calcular
+    
+    Returns:
+    --------
+    terminal_points : numpy.ndarray
+        Array de puntos terminales (theta, phi)
+    """
+    if not projected_points:
+        return np.array([])
+    
+    # Convertir a array numpy
+    points_array = np.array(projected_points)
+    
+    # Ajustar el número de clusters si hay pocos puntos
+    actual_num_needles = min(num_needles, len(projected_points))
+    
+    if actual_num_needles == 0:
+        return np.array([])
+    
+    # Aplicar k-means clustering
+    kmeans = KMeans(n_clusters=actual_num_needles, random_state=42)
+    kmeans.fit(points_array)
+    
+    # Obtener los centros de los clusters como puntos terminales
+    terminal_points = kmeans.cluster_centers_
+    
+    return terminal_points
+
+# Configuración de la barra lateral
+st.sidebar.markdown('<p class="sidebar-title">Brachyanalysis</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="sub-header">Visualizador de imágenes DICOM</p>', unsafe_allow_html=True)
+
+# Sección de carga de archivos en la barra lateral
+st.sidebar.markdown('<p class="sub-header">Configuración</p>', unsafe_allow_html=True)
+
+# Solo opción de subir ZIP
+uploaded_file = st.sidebar.file_uploader("Sube un archivo ZIP con tus archivos DICOM", type="zip")
 
 # Función para buscar recursivamente archivos DICOM en un directorio
 def find_dicom_series(directory):
@@ -302,7 +389,42 @@ def apply_window_level(image, window_width, window_center):
     
     return image_windowed
 
-def plot_slice(vol, slice_ix, window_width, window_center, segmentation=None, oars=None):
+def plot_slice(vol, slice_ix, window_width, window_center):
+    fig, ax = plt.subplots(figsize=(12, 10))
+    plt.axis('off')
+    selected_slice = vol[slice_ix, :, :]
+    
+    # Aplicar ajustes de ventana/nivel
+    windowed_slice = apply_window_level(selected_slice, window_width, window_center)
+    
+    # Mostrar la imagen con los ajustes aplicados
+    ax.imshow(windowed_slice, origin='lower', cmap='gray')
+    return fig
+
+def plot_slice_with_segmentation(vol, slice_ix, window_width, window_center, segmentation_mask=None, projected_points=None):
+    """
+    Visualiza un corte con la segmentación superpuesta
+    
+    Parameters:
+    -----------
+    vol : numpy.ndarray
+        Volumen 3D de la imagen
+    slice_ix : int
+        Índice del corte a visualizar
+    window_width : float
+        Ancho de ventana para ajustes de visualización
+    window_center : float
+        Centro de ventana para ajustes de visualización
+    segmentation_mask : numpy.ndarray
+        Máscara de segmentación (opcional)
+    projected_points : list
+        Lista de puntos proyectados (opcional)
+    
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        Figura con la visualización
+    """
     fig, ax = plt.subplots(figsize=(12, 10))
     plt.axis('off')
     selected_slice = vol[slice_ix, :, :]
@@ -313,269 +435,29 @@ def plot_slice(vol, slice_ix, window_width, window_center, segmentation=None, oa
     # Mostrar la imagen con los ajustes aplicados
     ax.imshow(windowed_slice, origin='lower', cmap='gray')
     
-    # Superponer segmentación de tumor si existe
-    if segmentation is not None:
-        tumor_mask = segmentation[slice_ix, :, :].astype(float)
-        # Crear máscara de contorno para mejor visualización
-        if np.any(tumor_mask):
-            contour = binary_dilation(tumor_mask) & ~binary_erosion(tumor_mask)
-            ax.imshow(np.ma.masked_where(~contour, contour), origin='lower', cmap='autumn', alpha=0.7)
+    # Si hay una máscara de segmentación, superponerla
+    if segmentation_mask is not None:
+        # Crear una versión RGB de la imagen
+        segmentation_overlay = np.zeros((*windowed_slice.shape, 4))
+        segmentation_overlay[..., 0] = 1.0  # R (rojo)
+        segmentation_overlay[..., 1] = 0.0  # G (verde)
+        segmentation_overlay[..., 2] = 0.0  # B (azul)
+        segmentation_overlay[..., 3] = 0.3 * segmentation_mask  # Transparencia (alpha)
+        
+        # Superponer la máscara
+        ax.imshow(segmentation_overlay, origin='lower')
     
-    # Superponer segmentaciones de órganos de riesgo si existen
-    if oars is not None:
-        oar_colors = ['cyan', 'magenta', 'yellow', 'green']
-        for i, color in enumerate(oar_colors):
-            if i < oars.shape[0]:  # Asegurarse de que hay suficientes canales
-                oar_mask = oars[i, slice_ix, :, :]
-                if np.any(oar_mask):
-                    contour = binary_dilation(oar_mask) & ~binary_erosion(oar_mask)
-                    ax.imshow(np.ma.masked_where(~contour, contour), origin='lower', cmap=color, alpha=0.5)
+    # Si hay puntos proyectados, mostrarlos
+    if projected_points and len(projected_points) > 0:
+        # Convertir coordenadas esféricas a cartesianas
+        center = (selected_slice.shape[1] // 2, selected_slice.shape[0] // 2)
+        for theta, phi in projected_points:
+            # Cálculo simplificado para mostrar en 2D
+            x = center[0] + 50 * np.cos(theta)
+            y = center[1] + 50 * np.sin(theta)
+            ax.scatter(x, y, c='g', s=20)
     
     return fig
-
-# Función para realizar segmentación de tumor
-def segment_tumor(image_data, model):
-    # Aquí iría el código real para aplicar el modelo a los datos
-    # En esta versión de simulación, creamos una segmentación sintética
-    
-    # En un caso real:
-    """
-    model.eval()
-    with torch.no_grad():
-        data = {"image": image_data}
-        transforms = get_transform_pipeline()
-        data = transforms(data)
-        
-        pred = sliding_window_inference(
-            data["image"].unsqueeze(0),
-            roi_size=(96, 96, 96),
-            sw_batch_size=1,
-            predictor=model,
-            overlap=0.5
-        )
-        
-        # Convertir a numpy para visualización
-        pred_np = AsDiscrete(threshold=0.5)(pred[0, 1]).cpu().numpy()
-        # Redimensionar a tamaño original
-        pred_np = resize_segmentation(pred_np, image_data.shape)
-        return pred_np
-    """
-    
-    # Simular un tumor en el centro
-    segmentation = np.zeros_like(image_data)
-    center_z, center_y, center_x = np.array(image_data.shape) // 2
-    radius = min(image_data.shape) // 10
-    
-    z, y, x = np.ogrid[:image_data.shape[0], :image_data.shape[1], :image_data.shape[2]]
-    tumor_mask = (z - center_z)**2 + (y - center_y)**2 + (x - center_x)**2 <= radius**2
-    segmentation[tumor_mask] = 1
-    
-    return segmentation
-
-# Función para segmentar órganos de riesgo
-def segment_oars(image_data, model):
-    # Simulación de segmentación de órganos de riesgo
-    oars_segmentation = np.zeros((4, *image_data.shape), dtype=np.uint8)
-    
-    # Simular vejiga
-    center_z, center_y, center_x = np.array(image_data.shape) // 2
-    center_y -= image_data.shape[1] // 6  # Desplazar hacia arriba
-    
-    z, y, x = np.ogrid[:image_data.shape[0], :image_data.shape[1], :image_data.shape[2]]
-    bladder_mask = ((z - center_z)**2)/9 + ((y - center_y)**2)/4 + ((x - center_x)**2)/4 <= (image_data.shape[1] // 8)**2
-    oars_segmentation[0, bladder_mask] = 1
-    
-    # Simular recto
-    center_y += image_data.shape[1] // 3  # Desplazar abajo
-    rectum_mask = ((z - center_z)**2)/9 + ((y - center_y)**2)/4 + ((x - center_x)**2)/4 <= (image_data.shape[1] // 10)**2
-    oars_segmentation[1, rectum_mask] = 1
-    
-    # Simular intestino
-    center_x -= image_data.shape[2] // 4  # Desplazar a la izquierda
-    intestine_mask = ((z - center_z)**2)/16 + ((y - (center_y - 20))**2)/9 + ((x - center_x)**2)/9 <= (image_data.shape[1] // 12)**2
-    oars_segmentation[2, intestine_mask] = 1
-    
-    # Simular colon
-    center_x += image_data.shape[2] // 2  # Desplazar a la derecha
-    colon_mask = ((z - center_z)**2)/16 + ((y - (center_y - 20))**2)/9 + ((x - center_x)**2)/9 <= (image_data.shape[1] // 12)**2
-    oars_segmentation[3, colon_mask] = 1
-    
-    return oars_segmentation
-
-# Función para generar trayectoria de agujas
-def generate_needle_paths(tumor_segmentation, oars_segmentation=None, n_needles=5):
-    # En un caso real, se utilizaría un algoritmo de planificación para optimizar
-    # las trayectorias basado en la segmentación del tumor y órganos de riesgo
-    
-    # Encontrar el centro del tumor
-    z_indices, y_indices, x_indices = np.where(tumor_segmentation > 0)
-    if len(z_indices) == 0:
-        return []
-    
-    tumor_center = np.array([
-        np.mean(z_indices),
-        np.mean(y_indices),
-        np.mean(x_indices)
-    ])
-    
-    # Generar puntos equidistantes alrededor del centro del tumor
-    needle_paths = []
-    radius = min(len(z_indices), len(y_indices), len(x_indices)) // 3
-    
-    for i in range(n_needles):
-        angle = 2 * np.pi * i / n_needles
-        
-        # Punto dentro del tumor
-        target_point = tumor_center + np.array([0, radius * np.cos(angle), radius * np.sin(angle)])
-        
-        # Punto de entrada (desde abajo)
-        entry_z = tumor_center[0] + tumor_segmentation.shape[0] // 4
-        entry_point = np.array([entry_z, target_point[1], target_point[2]])
-        
-        needle_paths.append({
-            'entry': entry_point.astype(int),
-            'target': target_point.astype(int)
-        })
-    
-    return needle_paths
-
-# Función para generar una vista previa del template 3D
-def generate_template_preview(needle_paths, image_shape):
-    # Convertir las coordenadas de aguja a un formato adecuado para FreeCAD
-    template_data = {
-        'holes': []
-    }
-    
-    for path in needle_paths:
-        # Normalizar coordenadas a dimensiones reales (en mm)
-        entry = path['entry']
-        normalized_coords = [
-            float(entry[2]) / image_shape[2] * 50 - 25,  # X: -25 a 25 mm
-            float(entry[1]) / image_shape[1] * 50 - 25   # Y: -25 a 25 mm
-        ]
-        
-        template_data['holes'].append({
-            'x': normalized_coords[0],
-            'y': normalized_coords[1],
-            'diameter': 1.5  # Diámetro del orificio en mm
-        })
-    
-    return template_data
-
-# Función para visualizar el template en 3D
-def visualize_template(template_data):
-    # Crear una figura 3D con Plotly
-    fig = go.Figure()
-    
-    # Añadir la base del template como una caja
-    fig.add_trace(go.Mesh3d(
-        x=[25, 25, -25, -25, 25, 25, -25, -25],
-        y=[25, -25, -25, 25, 25, -25, -25, 25],
-        z=[0, 0, 0, 0, 5, 5, 5, 5],
-        i=[0, 0, 0, 1, 4, 4, 4, 5],
-        j=[1, 2, 4, 5, 5, 6, 7, 6],
-        k=[2, 3, 7, 6, 6, 7, 3, 2],
-        opacity=0.4,
-        color='#28aec5'
-    ))
-    
-    # Añadir los orificios como cilindros
-    for hole in template_data['holes']:
-        x, y = hole['x'], hole['y']
-        r = hole['diameter'] / 2
-        
-        # Crear una malla cilíndrica
-        theta = np.linspace(0, 2*np.pi, 20)
-        z = np.linspace(0, 5, 2)
-        theta_grid, z_grid = np.meshgrid(theta, z)
-        
-        x_cylinder = x + r * np.cos(theta_grid)
-        y_cylinder = y + r * np.sin(theta_grid)
-        z_cylinder = z_grid
-        
-        fig.add_trace(go.Surface(
-            x=x_cylinder,
-            y=y_cylinder,
-            z=z_cylinder,
-            colorscale=[[0, '#c0d711'], [1, '#c0d711']],
-            showscale=False
-        ))
-    
-    # Configurar el layout
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title="X (mm)", range=[-30, 30]),
-            yaxis=dict(title="Y (mm)", range=[-30, 30]),
-            zaxis=dict(title="Z (mm)", range=[0, 10]),
-            aspectmode="data"
-        ),
-        scene_camera=dict(
-            eye=dict(x=1.5, y=-1.5, z=1.2)
-        ),
-        margin=dict(l=0, r=0, b=0, t=0),
-        height=600
-    )
-    
-    return fig
-
-# Función para exportar los datos a formato FreeCAD
-def export_to_freecad(template_data):
-    # Generar un script de Python para FreeCAD
-    freecad_script = f"""# Script de FreeCAD para crear un template de braquiterapia
-import FreeCAD as App
-import Part
-import Draft
-
-# Crear documento
-doc = App.newDocument("BrachytherapyTemplate")
-
-# Crear la base del template
-base = Part.makeBox(50, 50, 5)
-template = doc.addObject("Part::Feature", "Template")
-template.Shape = base
-
-# Crear orificios para las agujas
-holes = []
-"""
-
-    # Añadir código para cada orificio
-    for i, hole in enumerate(template_data['holes']):
-        freecad_script += f"""
-# Orificio {i+1}
-hole{i} = Part.makeCylinder({hole['diameter']/2}, 5, App.Vector({hole['x']+25}, {hole['y']+25}, 0), App.Vector(0, 0, 1))
-holes.append(hole{i})
-"""
-
-    # Finalizar el script para realizar la operación booleana
-    freecad_script += """
-# Realizar la operación booleana para sustraer los orificios
-combined_holes = holes[0]
-for hole in holes[1:]:
-    combined_holes = combined_holes.fuse(hole)
-
-result = template.Shape.cut(combined_holes)
-final_template = doc.addObject("Part::Feature", "FinalTemplate")
-final_template.Shape = result
-
-# Ocultar objetos intermedios
-template.ViewObject.Visibility = False
-
-# Guardar el archivo
-doc.recompute()
-doc.saveAs("BrachytherapyTemplate.FCStd")
-"""
-    
-    return freecad_script
-
-# Configuración de la barra lateral
-st.sidebar.markdown('<p class="sidebar-title">Brachyanalysis</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="sub-header">Visualizador y planificador para braquiterapia</p>', unsafe_allow_html=True)
-
-# Sección de carga de archivos en la barra lateral
-st.sidebar.markdown('<p class="sub-header">Configuración</p>', unsafe_allow_html=True)
-
-# Solo opción de subir ZIP
-uploaded_file = st.sidebar.file_uploader("Sube un archivo ZIP con tus archivos DICOM", type="zip")
 
 # Procesar archivos subidos
 dirname = None
@@ -602,12 +484,16 @@ output = None
 n_slices = 0
 slice_ix = 0
 reader = None
-tumor_segmentation = None
-oars_segmentation = None
-needle_paths = []
+tumor_mask = None
+projected_points = None
+terminal_points = None
 
-# Cargar modelos de segmentación
-tumor_model, oars_model = load_models()
+# Añadir configuración para la segmentación
+segmentation_method = st.sidebar.radio(
+    "Método de segmentación",
+    ["Ninguno", "Umbral", "Crecimiento de regiones"],
+    index=0
+)
 
 # Define los presets de ventana basados en RadiAnt
 radiant_presets = {
@@ -655,13 +541,8 @@ if dirname is not None:
         
             n_slices = img.shape[0]
             slice_ix = st.sidebar.slider('Seleccionar corte', 0, n_slices - 1, int(n_slices/2))
+            output = st.sidebar.radio('Tipo de visualización', ['Imagen', 'Metadatos', 'Segmentación'], index=0)
             
-            # Modificar opciones de visualización para incluir segmentación y planificación
-            output = st.sidebar.radio('Modo de visualización', 
-                                     ['Imagen', 'Segmentación', 'Planificación', 'Metadatos'], 
-                                     index=0)
-            
-            # Añadir controles de ventana (brillo y contraste)
             # Calcular valores iniciales para la ventana
             if img is not None:
                 min_val = float(img.min())
@@ -672,13 +553,15 @@ if dirname is not None:
                 default_window_width = range_val
                 default_window_center = min_val + (range_val / 2)
                 
+                # Ajustar los presets automáticos
+                radiant_presets["Default window"] = (default_window_width, default_window_center)
+                radiant_presets["Full dynamic"] = (range_val, min_val + (range_val / 2))
+            
+            # Añadir controles de ventana (brillo y contraste) si la salida es Imagen o Segmentación
+            if output in ['Imagen', 'Segmentación']:
                 # Añadir presets de ventana para radiología
                 st.sidebar.markdown('<div class="control-section">', unsafe_allow_html=True)
                 st.sidebar.markdown('<p class="sub-header">Presets de ventana</p>', unsafe_allow_html=True)
-                
-                # Actualizar los presets automáticos
-                radiant_presets["Default window"] = (default_window_width, default_window_center)
-                radiant_presets["Full dynamic"] = (range_val, min_val + (range_val / 2))
                 
                 selected_preset = st.sidebar.selectbox(
                     "Presets radiológicos",
@@ -726,80 +609,109 @@ if dirname is not None:
                 
                 st.sidebar.markdown('</div>', unsafe_allow_html=True)
                 
-                # Añadir controles para la segmentación si estamos en ese modo
+                # Si la salida es Segmentación, añadir controles específicos de segmentación
                 if output == 'Segmentación':
-                    st.sidebar.markdown('<div class="segmentation-control">', unsafe_allow_html=True)
-                    st.sidebar.markdown('<p class="sub-header">Opciones de segmentación</p>', unsafe_allow_html=True)
+                    st.sidebar.markdown('<div class="control-section">', unsafe_allow_html=True)
+                    st.sidebar.markdown('<p class="sub-header">Parámetros de segmentación</p>', unsafe_allow_html=True)
                     
-                    # Botones para ejecutar la segmentación
-                    run_tumor_segmentation = st.sidebar.button("Segmentar tumor cervical")
-                    run_oars_segmentation = st.sidebar.button("Segmentar órganos de riesgo")
-                    
-                    if run_tumor_segmentation:
-                        with st.spinner('Segmentando tumor...'):
-                            tumor_segmentation = segment_tumor(img, tumor_model)
-                            st.sidebar.success("Segmentación de tumor completada")
-                    
-                    if run_oars_segmentation:
-                        with st.spinner('Segmentando órganos de riesgo...'):
-                            oars_segmentation = segment_oars(img, oars_model)
-                            st.sidebar.success("Segmentación de OARs completada")
-                    
-                    # Opciones de visualización
-                    show_tumor = st.sidebar.checkbox("Mostrar tumor", value=True)
-                    show_oars = st.sidebar.checkbox("Mostrar OARs", value=True)
-                    
-                    # Selector de órganos específicos si se han segmentado
-                    if oars_segmentation is not None and show_oars:
-                        oar_names = ["Vejiga", "Recto", "Intestino delgado", "Colon"]
-                        selected_oars = st.sidebar.multiselect(
-                            "Órganos de riesgo a mostrar",
-                            oar_names,
-                            default=oar_names
+                    if segmentation_method == "Umbral":
+                        # Parámetros para segmentación por umbral
+                        min_threshold = st.sidebar.slider(
+                            "Umbral mínimo", 
+                            min_value=float(min_val),
+                            max_value=float(max_val),
+                            value=float(min_val + 0.8 * range_val),  # Por defecto, 80% del rango
+                            format="%.1f"
                         )
                         
-                        # Crear máscara según selección
-                        oars_mask = np.zeros_like(oars_segmentation)
-                        for i, name in enumerate(oar_names):
-                            if name in selected_oars:
-                                oars_mask[i] = oars_segmentation[i]
+                        max_threshold = st.sidebar.slider(
+                            "Umbral máximo",
+                            min_value=float(min_val),
+                            max_value=float(max_val),
+                            value=float(max_val),
+                            format="%.1f"
+                        )
                         
-                        # Reemplazar segmentación con la máscara filtrada
-                        oars_segmentation = oars_mask if any(selected_oars) else None
+                        # Segmentar el tumor usando umbrales
+                        tumor_mask = threshold_based_segmentation(
+                            img, slice_ix, min_threshold, max_threshold
+                        )
+                        
+                    elif segmentation_method == "Crecimiento de regiones":
+                        # Parámetros para segmentación por crecimiento de regiones
+                        threshold_factor = st.sidebar.slider(
+                            "Factor de umbral",
+                            min_value=0.05,
+                            max_value=0.5,
+                            value=0.3,
+                            step=0.05
+                        )
+                        
+                        # Obtener la posición del punto semilla mediante un clic en la imagen
+                        st.sidebar.markdown("**Punto semilla:**")
+                        st.sidebar.markdown("Para seleccionar, haga clic en la imagen")
+                        
+                        seed_point = None
+                        # Por defecto, usar el centro de la imagen
+                        y_center, x_center = img[slice_ix].shape[0] // 2, img[slice_ix].shape[1] // 2
+                        
+                        seed_y = st.sidebar.slider(
+                            "Y", 
+                            min_value=0,
+                            max_value=img[slice_ix].shape[0] - 1,
+                            value=y_center
+                        )
+                        
+                        seed_x = st.sidebar.slider(
+                            "X", 
+                            min_value=0,
+                            max_value=img[slice_ix].shape[1] - 1,
+                            value=x_center
+                        )
+                        
+                        seed_point = (seed_y, seed_x)
+                        
+                        # Segmentar el tumor usando crecimiento de regiones
+                        tumor_mask = region_growing_segmentation(
+                            img, slice_ix, seed_point, threshold_factor
+                        )
+                    
+                    # Proyectar el tumor a una superficie esférica si hay una segmentación
+                    if tumor_mask is not None and np.any(tumor_mask):
+                        st.sidebar.markdown('<p class="sub-header">Proyección del tumor</p>', unsafe_allow_html=True)
+                        
+                        # Botón para realizar la proyección
+                        if st.sidebar.button("Proyectar tumor"):
+                            # Calcular centro de la plantilla y radio
+                            template_center = (tumor_mask.shape[0] // 2, tumor_mask.shape[1] // 2)
+                            
+                            # Proyectar el tumor
+                            projected_points = project_tumor_to_sphere(
+                                tumor_mask, img, slice_ix, template_center
+                            )
+                            
+                            # Calcular puntos terminales
+                            num_needles = st.sidebar.slider(
+                                "Número de agujas",
+                                min_value=1,
+                                max_value=15,
+                                value=9
+                            )
+                            
+                            terminal_points = calculate_terminal_points(
+                                projected_points, num_needles
+                            )
+                            
+                            st.sidebar.success(f"Se encontraron {len(projected_points)} puntos proyectados")
+                            st.sidebar.success(f"Se calcularon {len(terminal_points)} puntos terminales")
                     
                     st.sidebar.markdown('</div>', unsafe_allow_html=True)
-                
-                # Añadir controles para la planificación si estamos en ese modo
-                if output == 'Planificación':
-                    st.sidebar.markdown('<div class="segmentation-control">', unsafe_allow_html=True)
-                    st.sidebar.markdown('<p class="sub-header">Planificación de agujas</p>', unsafe_allow_html=True)
-                    
-                    # Asegurarse de que tengamos segmentación de tumor
-                    if tumor_segmentation is None:
-                        with st.spinner('Segmentando tumor...'):
-                            tumor_segmentation = segment_tumor(img, tumor_model)
-                    
-                    # Asegurarse de que tengamos segmentación de OARs
-                    if oars_segmentation is None:
-                        with st.spinner('Segmentando órganos de riesgo...'):
-                            oars_segmentation = segment_oars(img, oars_model)
-                    
-                    # Número de agujas
-                    n_needles = st.sidebar.slider('Número de agujas', 3, 15, 9)
-                    
-                    # Botón para generar trayectorias
-                    if st.sidebar.button("Generar trayectorias de aguja"):
-                        with st.spinner('Calculando trayectorias óptimas...'):
-                            needle_paths = generate_needle_paths(tumor_segmentation, oars_segmentation, n_needles)
-                            st.sidebar.success(f"Se generaron {len(needle_paths)} trayectorias")
-                    
-                    st.sidebar.markdown('</div>', unsafe_allow_html=True)
-            
-            else:
-                # Valores predeterminados para cuando no son necesarios
-                window_width = 1000
-                window_center = 0
-                is_negative = False
+
+        else:
+            # Valores predeterminados para cuando no son necesarios
+            window_width = max_val - min_val if 'max_val' in locals() else 1000
+            window_center = (max_val + min_val) / 2 if 'max_val' in locals() else 0
+            is_negative = False
                 
         except Exception as e:
             st.sidebar.error(f"Error al procesar los archivos DICOM: {str(e)}")
@@ -813,6 +725,7 @@ if dirname is not None:
 # Título grande siempre visible
 st.markdown('<p class="giant-title">Brachyanalysis</p>', unsafe_allow_html=True)
 
+# Mostrar la visualización principal
 if img is not None:
     if output == 'Imagen':
         st.markdown('<p class="sub-header">Visualización DICOM</p>', unsafe_allow_html=True)
@@ -835,268 +748,7 @@ if img is not None:
             fig = plot_slice(img, slice_ix, window_width, window_center)
             st.pyplot(fig)
         
-    elif output == 'Segmentación':
-        st.markdown('<p class="sub-header">Segmentación de tumores y órganos de riesgo</p>', unsafe_allow_html=True)
-        
-        # Mostrar visualización con segmentaciones superpuestas
-        seg_to_display = tumor_segmentation if show_tumor else None
-        oars_to_display = oars_segmentation if show_oars else None
-        
-        # Mostrar la imagen con las segmentaciones
-        fig = plot_slice(img, slice_ix, window_width, window_center, seg_to_display, oars_to_display)
-        st.pyplot(fig)
-        
-        # Mostrar información adicional sobre la segmentación
-        col1, col2 = st.columns(2)
-        with col1:
-            if tumor_segmentation is not None:
-                tumor_volume = np.sum(tumor_segmentation) * 0.001  # Convertir a ml (asumiendo voxeles de 1mm³)
-                st.markdown(f"**Volumen del tumor:** {tumor_volume:.2f} ml")
-                st.markdown(f"**Ubicación central:** Z={int(np.mean(np.where(tumor_segmentation)[0]))}, "
-                          f"Y={int(np.mean(np.where(tumor_segmentation)[1]))}, "
-                          f"X={int(np.mean(np.where(tumor_segmentation)[2]))}")
-        
-        with col2:
-            if oars_segmentation is not None:
-                oar_names = ["Vejiga", "Recto", "Intestino delgado", "Colon"]
-                for i, name in enumerate(oar_names):
-                    if i < oars_segmentation.shape[0]:
-                        oar_volume = np.sum(oars_segmentation[i]) * 0.001  # Convertir a ml
-                        st.markdown(f"**Volumen {name}:** {oar_volume:.2f} ml")
-        
-    elif output == 'Planificación':
-        st.markdown('<p class="sub-header">Planificación de trayectorias de agujas</p>', unsafe_allow_html=True)
-        
-        # Crear pestañas para diferentes vistas
-        tabs = st.tabs(["Trayectorias 2D", "Visualización 3D", "Template 3D", "Exportar"])
-        
-        with tabs[0]:
-            # Mostrar trayectorias de agujas en 2D
-            fig, ax = plt.subplots(figsize=(12, 10))
-            plt.axis('off')
-            
-            # Mostrar imagen base
-            selected_slice = img[slice_ix, :, :]
-            windowed_slice = apply_window_level(selected_slice, window_width, window_center)
-            ax.imshow(windowed_slice, origin='lower', cmap='gray')
-            
-            # Mostrar tumor
-            if tumor_segmentation is not None:
-                tumor_slice = tumor_segmentation[slice_ix, :, :]
-                if np.any(tumor_slice):
-                    contour = binary_dilation(tumor_slice) & ~binary_erosion(tumor_slice)
-                    ax.imshow(np.ma.masked_where(~contour, contour), origin='lower', cmap='autumn', alpha=0.7)
-            
-            # Mostrar órganos de riesgo
-            if oars_segmentation is not None:
-                oar_colors = ['cyan', 'magenta', 'yellow', 'green']
-                for i, color in enumerate(oar_colors):
-                    if i < oars_segmentation.shape[0]:
-                        oar_slice = oars_segmentation[i, slice_ix, :, :]
-                        if np.any(oar_slice):
-                            contour = binary_dilation(oar_slice) & ~binary_erosion(oar_slice)
-                            ax.imshow(np.ma.masked_where(~contour, contour), origin='lower', cmap=color, alpha=0.5)
-            
-            # Dibujar trayectorias de agujas
-            if needle_paths:
-                for i, path in enumerate(needle_paths):
-                    # Verificar si la trayectoria pasa por este corte
-                    entry = path['entry']
-                    target = path['target']
-                    
-                    # Dibujar solo si la trayectoria pasa cerca de este corte
-                    z_min = min(entry[0], target[0])
-                    z_max = max(entry[0], target[0])
-                    if z_min <= slice_ix <= z_max or abs(slice_ix - z_min) <= 3 or abs(slice_ix - z_max) <= 3:
-                        # Calcular punto de intersección con este corte
-                        if entry[0] != target[0]:  # Evitar división por cero
-                            t = (slice_ix - entry[0]) / (target[0] - entry[0])
-                            intersection_y = entry[1] + t * (target[1] - entry[1])
-                            intersection_x = entry[2] + t * (target[2] - entry[2])
-                            
-                            # Dibujar punto de intersección de la aguja
-                            ax.scatter(intersection_x, intersection_y, color='#c0d711', s=50, marker='o', edgecolors='black', label=f'Aguja {i+1}')
-                            ax.text(intersection_x + 10, intersection_y + 10, f'{i+1}', color='white', fontsize=12, bbox=dict(facecolor='#28aec5', alpha=0.7))
-            
-            st.pyplot(fig)
-            
-            # Mostrar información sobre las trayectorias
-            if needle_paths:
-                st.markdown('<div class="needle-planning">', unsafe_allow_html=True)
-                st.markdown('<p class="sub-header">Información de trayectorias</p>', unsafe_allow_html=True)
-                
-                needle_data = []
-                for i, path in enumerate(needle_paths):
-                    entry = path['entry']
-                    target = path['target']
-                    length = np.sqrt(np.sum((entry - target)**2)) * 0.1  # Convertir a cm
-                    needle_data.append({
-                        'Número': i+1,
-                        'Entrada (Z,Y,X)': f"{entry[0]}, {entry[1]}, {entry[2]}",
-                        'Objetivo (Z,Y,X)': f"{target[0]}, {target[1]}, {target[2]}",
-                        'Longitud (cm)': f"{length:.1f}"
-                    })
-                
-                df = pd.DataFrame(needle_data)
-                st.dataframe(df)
-                st.markdown('</div>', unsafe_allow_html=True)
-        
-        with tabs[1]:
-            # Visualización 3D de trayectorias (usando Plotly)
-            if needle_paths:
-                # Crear figura 3D
-                fig = go.Figure()
-                
-                # Añadir tumor como superficie isométrica
-                if tumor_segmentation is not None:
-                    z_coords, y_coords, x_coords = np.where(tumor_segmentation > 0)
-                    fig.add_trace(go.Scatter3d(
-                        x=x_coords, y=y_coords, z=z_coords,
-                        mode='markers',
-                        marker=dict(
-                            size=3,
-                            color='red',
-                            opacity=0.3
-                        ),
-                        name='Tumor'
-                    ))
-                
-                # Añadir órganos de riesgo como nubes de puntos
-                if oars_segmentation is not None:
-                    oar_colors = ['cyan', 'magenta', 'yellow', 'green']
-                    oar_names = ["Vejiga", "Recto", "Intestino delgado", "Colon"]
-                    
-                    for i, (color, name) in enumerate(zip(oar_colors, oar_names)):
-                        if i < oars_segmentation.shape[0]:
-                            # Submuestrear para mejorar rendimiento
-                            z_coords, y_coords, x_coords = np.where(oars_segmentation[i] > 0)
-                            sample_rate = max(1, len(z_coords) // 1000)  # Limitar a ~1000 puntos
-                            
-                            fig.add_trace(go.Scatter3d(
-                                x=x_coords[::sample_rate], 
-                                y=y_coords[::sample_rate], 
-                                z=z_coords[::sample_rate],
-                                mode='markers',
-                                marker=dict(
-                                    size=2,
-                                    color=color,
-                                    opacity=0.2
-                                ),
-                                name=name
-                            ))
-                
-                # Añadir trayectorias de agujas
-                for i, path in enumerate(needle_paths):
-                    entry = path['entry']
-                    target = path['target']
-                    
-                    fig.add_trace(go.Scatter3d(
-                        x=[entry[2], target[2]],
-                        y=[entry[1], target[1]],
-                        z=[entry[0], target[0]],
-                        mode='lines+markers',
-                        line=dict(color='#c0d711', width=5),
-                        marker=dict(size=6, color=['#28aec5', '#c0d711']),
-                        name=f'Aguja {i+1}'
-                    ))
-                
-                # Configurar layout
-                fig.update_layout(
-                    scene=dict(
-                        xaxis_title='X',
-                        yaxis_title='Y',
-                        zaxis_title='Z',
-                        aspectmode='data'
-                    ),
-                    margin=dict(l=0, r=0, b=0, t=0),
-                    legend=dict(
-                        yanchor="top",
-                        y=0.99,
-                        xanchor="left",
-                        x=0.01
-                    ),
-                    height=700
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Genera trayectorias de agujas primero para visualizar en 3D")
-        
-        with tabs[2]:
-            # Visualización del template 3D
-            if needle_paths:
-                # Generar datos para el template
-                template_data = generate_template_preview(needle_paths, img.shape)
-                
-                # Visualizar el template en 3D
-                fig = visualize_template(template_data)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Mostrar información del template
-                st.markdown('<div class="template-preview">', unsafe_allow_html=True)
-                st.markdown(f"**Template con {len(template_data['holes'])} orificios**")
-                st.markdown("Dimensiones: 50mm x 50mm x 5mm")
-                st.markdown('</div>', unsafe_allow_html=True)
-            else:
-                st.warning("Genera trayectorias de agujas primero para crear el template")
-        
-        with tabs[3]:
-            # Opciones de exportación
-            if needle_paths:
-                st.markdown('<p class="sub-header">Exportar datos para fabricación</p>', unsafe_allow_html=True)
-                
-                # Generar datos para el template
-                template_data = generate_template_preview(needle_paths, img.shape)
-                
-                # Generar script para FreeCAD
-                freecad_script = export_to_freecad(template_data)
-                
-                # Opciones de exportación
-                export_format = st.radio("Formato de exportación", ["Script FreeCAD", "Coordenadas CSV"])
-                
-                if export_format == "Script FreeCAD":
-                    st.code(freecad_script, language="python")
-                    
-                    # Crear botón de descarga para el script
-                    freecad_bytes = freecad_script.encode()
-                    st.download_button(
-                        label="Descargar script FreeCAD",
-                        data=freecad_bytes,
-                        file_name="template_freecad.py",
-                        mime="text/plain"
-                    )
-                else:
-                    # Crear CSV con datos de coordenadas
-                    csv_data = "hole_id,x_mm,y_mm,diameter_mm\n"
-                    for i, hole in enumerate(template_data['holes']):
-                        csv_data += f"{i+1},{hole['x']},{hole['y']},{hole['diameter']}\n"
-                    
-                    st.text_area("Datos CSV", csv_data, height=200)
-                    
-                    # Crear botón de descarga para CSV
-                    csv_bytes = csv_data.encode()
-                    st.download_button(
-                        label="Descargar coordenadas CSV",
-                        data=csv_bytes,
-                        file_name="template_coords.csv",
-                        mime="text/csv"
-                    )
-            else:
-                st.warning("Genera trayectorias de agujas primero para exportar datos")
-    
-    elif output == 'Metadatos':
-        st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
-        try:
-            metadata = dict()
-            for k in reader.GetMetaDataKeys(slice_ix):
-                metadata[k] = reader.GetMetaData(slice_ix, k)
-            df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
-            st.dataframe(df, height=600)
-        except Exception as e:
-            st.error(f"Error al leer metadatos: {str(e)}")
-    
-    # Información adicional sobre la imagen y los ajustes actuales
-    if output in ['Imagen', 'Segmentación']:
+        # Información adicional sobre la imagen y los ajustes actuales
         info_cols = st.columns(6)
         with info_cols[0]:
             st.markdown(f"**Dimensiones:** {img.shape[1]} x {img.shape[2]} px")
@@ -1110,6 +762,75 @@ if img is not None:
             st.markdown(f"**Ancho (WW):** {window_width:.1f}")
         with info_cols[5]:
             st.markdown(f"**Centro (WL):** {window_center:.1f}")
+            
+    elif output == 'Metadatos':
+        st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
+        try:
+            metadata = dict()
+            for k in reader.GetMetaDataKeys(slice_ix):
+                metadata[k] = reader.GetMetaData(slice_ix, k)
+            df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
+            st.dataframe(df, height=600)
+        except Exception as e:
+            st.error(f"Error al leer metadatos: {str(e)}")
+            
+    elif output == 'Segmentación':
+        st.markdown('<p class="sub-header">Segmentación del Tumor</p>', unsafe_allow_html=True)
+        
+        # Visualizar la imagen con la segmentación sobrepuesta
+        if tumor_mask is not None:
+            fig = plot_slice_with_segmentation(
+                img, slice_ix, window_width, window_center, 
+                segmentation_mask=tumor_mask, 
+                projected_points=terminal_points if terminal_points is not None else None
+            )
+            st.pyplot(fig)
+            
+            # Mostrar estadísticas sobre la segmentación
+            if np.any(tumor_mask):
+                tumor_pixels = np.sum(tumor_mask)
+                tumor_percentage = (tumor_pixels / tumor_mask.size) * 100
+                
+                stats_cols = st.columns(3)
+                with stats_cols[0]:
+                    st.markdown(f"**Píxeles del tumor:** {tumor_pixels}")
+                with stats_cols[1]:
+                    st.markdown(f"**Porcentaje del área:** {tumor_percentage:.2f}%")
+                with stats_cols[2]:
+                    st.markdown(f"**Método:** {segmentation_method}")
+                
+                # Si hay puntos proyectados, mostrar información sobre ellos
+                if projected_points and len(projected_points) > 0:
+                    st.markdown('<p class="sub-header">Proyección del Tumor</p>', unsafe_allow_html=True)
+                    st.markdown(f"**Puntos proyectados:** {len(projected_points)}")
+                    
+                    if terminal_points is not None and len(terminal_points) > 0:
+                        # Convertir los puntos terminales a posiciones en la imagen
+                        st.markdown(f"**Puntos terminales calculados:** {len(terminal_points)}")
+                        
+                        # Mostrar coordenadas de los puntos terminales
+                        terminal_df = pd.DataFrame({
+                            'Punto': [f'Punto {i+1}' for i in range(len(terminal_points))],
+                            'Theta': [f"{point[0]:.4f}" for point in terminal_points],
+                            'Phi': [f"{point[1]:.4f}" for point in terminal_points]
+                        })
+                        st.dataframe(terminal_df)
+                        
+                        # Opción para exportar los resultados
+                        if st.button("Exportar resultados de la segmentación"):
+                            # Crear un CSV con los resultados
+                            csv = terminal_df.to_csv(index=False)
+                            st.download_button(
+                                label="Descargar CSV de puntos",
+                                data=csv,
+                                file_name="puntos_terminales.csv",
+                                mime="text/csv",
+                            )
+            else:
+                st.warning("No se detectaron píxeles del tumor con los parámetros actuales. Ajusta los parámetros e intenta de nuevo.")
+        else:
+            st.info("Selecciona un método de segmentación y ajusta los parámetros en el panel lateral.")
+            
 else:
     # Página de inicio cuando no hay imágenes cargadas
     st.markdown('<p class="sub-header">Visualizador de imágenes DICOM</p>', unsafe_allow_html=True)
@@ -1119,13 +840,6 @@ else:
         <img src="https://raw.githubusercontent.com/SimpleITK/SimpleITK/master/Documentation/docs/images/simpleitk-logo.svg" alt="SimpleITK Logo" width="200">
         <h2 style="color: #28aec5; margin-top: 20px;">Carga un archivo ZIP con tus imágenes DICOM</h2>
         <p style="font-size: 18px; margin-top: 10px;">Utiliza el panel lateral para subir tus archivos y visualizarlos</p>
-        <p style="font-size: 16px; margin-top: 20px;">La aplicación incluye:</p>
-        <ul style="list-style-type: none; display: inline-block; text-align: left;">
-            <li>✓ Segmentación automática de tumores cervicales</li>
-            <li>✓ Identificación de órganos de riesgo</li>
-            <li>✓ Planificación de trayectorias de agujas</li>
-            <li>✓ Generación de templates 3D</li>
-        </ul>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1133,7 +847,7 @@ else:
 st.markdown("""
 <hr style="margin-top: 30px;">
 <div style="text-align: center; color: #28aec5; font-size: 14px;">
-    Brachyanalysis - Visualizador y planificador para braquiterapia
+    Brachyanalysis - Visualizador de imágenes DICOM
 </div>
 """, unsafe_allow_html=True)
 
