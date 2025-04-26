@@ -14,7 +14,7 @@ import matplotlib.patches as patches
 # ----------------------------
 
 def load_dicom_series(directory):
-    """Carga manualmente imágenes DICOM desde un directorio"""
+    """Carga manualmente imágenes DICOM desde un directorio, tolerante a tamaños distintos"""
     dicom_files = []
     for root, _, files in os.walk(directory):
         for file in files:
@@ -32,8 +32,19 @@ def load_dicom_series(directory):
     # Ordenar por InstanceNumber si existe
     dicom_files.sort(key=lambda x: getattr(x[1], 'InstanceNumber', 0))
     
+    # Agrupar por tamaño
+    shape_counts = {}
+    for _, dcm in dicom_files:
+        shape = dcm.pixel_array.shape
+        shape_counts[shape] = shape_counts.get(shape, 0) + 1
+    
+    # Buscar el tamaño más común
+    best_shape = max(shape_counts, key=shape_counts.get)
+
+    # Solo usar imágenes del tamaño correcto
+    slices = [d[1].pixel_array for d in dicom_files if d[1].pixel_array.shape == best_shape]
+
     # Crear volumen
-    slices = [d[1].pixel_array for d in dicom_files]
     volume = np.stack(slices)
 
     # Obtener info de volumen
@@ -51,9 +62,10 @@ def load_dicom_series(directory):
         'spacing': spacing,
         'origin': origin,
         'direction': direction,
-        'sitk_image': None  # No usamos SITK en este modo
+        'sitk_image': None
     }
     return volume, volume_info
+
 
 
 def load_rtstruct(path, volume_info):
