@@ -49,7 +49,7 @@ def load_dicom_series(directory):
 
     # Obtener info de volumen
     sample = dicom_files[0][1]
-    spacing = getattr(sample, 'PixelSpacing', [1,1]) + [getattr(sample, 'SliceThickness', 1)]
+    spacing = list(getattr(sample, 'PixelSpacing', [1,1])) + [getattr(sample, 'SliceThickness', 1)]
     origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
     direction = getattr(sample, 'ImageOrientationPatient', [1,0,0,0,1,0])
     direction = np.array([
@@ -66,8 +66,6 @@ def load_dicom_series(directory):
     }
     return volume, volume_info
 
-
-
 def load_rtstruct(path, volume_info):
     """Carga contornos RTSTRUCT"""
     struct = pydicom.dcmread(path)
@@ -80,15 +78,17 @@ def load_rtstruct(path, volume_info):
         color = np.array(roi.ROIDisplayColor) / 255.0 if hasattr(roi, 'ROIDisplayColor') else np.random.rand(3)
         contours = []
         for contour in roi.ContourSequence:
-            pts = np.array(contour.ContourData).reshape(-1, 3)  # (N, 3)
+            pts = np.array(contour.ContourData).reshape(-1, 3)
             contours.append({'points': pts, 'z': np.mean(pts[:, 2])})
         structures[roi_names[roi.ReferencedROINumber]] = {'color': color, 'contours': contours}
     return structures
 
 def patient_to_voxel_coords(points, volume_info):
     """Transforma coordenadas de paciente a índices de voxel"""
-    image = volume_info['sitk_image']
-    return [image.TransformPhysicalPointToIndex(tuple(pt)) for pt in points]
+    spacing = volume_info['spacing']
+    origin = volume_info['origin']
+    coords = (points - origin) / spacing
+    return coords
 
 def draw_slice_with_structures(volume, slice_idx, plane, structures, volume_info, window, show_names=True):
     """Dibuja un corte específico y superpone estructuras"""
