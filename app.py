@@ -7,221 +7,217 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 import SimpleITK as sitk
+import pydicom
+from pydicom.dataset import Dataset
 import matplotlib.patches as patches
+from matplotlib.path import Path
+import matplotlib.colors as mcolors
 
-# Configuración de página y estilo
+# Configuración de página
 st.set_page_config(layout="wide", page_title="Brachyanalysis")
 
-# CSS personalizado (mantenido del código original)
+# CSS personalizado
 st.markdown("""
 <style>
-    .main-header {
-        color: #28aec5;
-        text-align: center;
-        font-size: 42px;
-        margin-bottom: 20px;
-        font-weight: bold;
-    }
-    .giant-title {
-        color: #28aec5;
-        text-align: center;
-        font-size: 72px;
-        margin: 30px 0;
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-    }
-    .sub-header {
-        color: #c0d711;
-        font-size: 24px;
-        margin-bottom: 15px;
-        font-weight: bold;
-    }
-    .stButton>button {
-        background-color: #28aec5;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        padding: 8px 16px;
-    }
-    .stButton>button:hover {
-        background-color: #1c94aa;
-    }
-    .info-box {
-        background-color: rgba(40, 174, 197, 0.1);
-        border-left: 3px solid #28aec5;
-        padding: 10px;
-        margin: 10px 0;
-    }
-    .success-box {
-        background-color: rgba(192, 215, 17, 0.1);
-        border-left: 3px solid #c0d711;
-        padding: 10px;
-        margin: 10px 0;
-    }
+    .main-header {color: #28aec5; text-align: center; font-size: 42px; margin-bottom: 20px; font-weight: bold;}
+    .giant-title {color: #28aec5; text-align: center; font-size: 72px; margin: 30px 0; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);}
+    .sub-header {color: #c0d711; font-size: 24px; margin-bottom: 15px; font-weight: bold;}
+    .stButton>button {background-color: #28aec5; color: white; border: none; border-radius: 4px; padding: 8px 16px;}
+    .stButton>button:hover {background-color: #1c94aa;}
+    .info-box {background-color: rgba(40, 174, 197, 0.1); border-left: 3px solid #28aec5; padding: 10px; margin: 10px 0;}
+    .success-box {background-color: rgba(192, 215, 17, 0.1); border-left: 3px solid #c0d711; padding: 10px; margin: 10px 0;}
+    .sidebar-title {color: #28aec5; font-size: 28px; font-weight: bold; margin-bottom: 15px;}
 </style>
 """, unsafe_allow_html=True)
 
 # Configuración de la barra lateral
 st.sidebar.markdown('<p class="sidebar-title">Brachyanalysis</p>', unsafe_allow_html=True)
-st.sidebar.markdown('<p class="sub-header">Visualizador de imágenes DICOM</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<p class="sub-header">Visualizador DICOM</p>', unsafe_allow_html=True)
 
-# Sección de carga de archivos en la barra lateral
-st.sidebar.markdown('<p class="sub-header">Configuración</p>', unsafe_allow_html=True)
+# Carga de archivos
 uploaded_file = st.sidebar.file_uploader("Sube un archivo ZIP con tus archivos DICOM", type="zip")
 
-# Función para buscar recursivamente archivos DICOM en un directorio
+# Funciones de procesamiento DICOM
 def find_dicom_files(directory):
-    """Busca recursivamente archivos DICOM en el directorio, separando imágenes y estructuras"""
-    image_series = []
-    structure_files = []
+    """Busca archivos DICOM en el directorio y clasifica por tipo"""
+    img_series = []
+    struct_files = []
     
-    for root, dirs, files in os.walk(directory):
-        try:
-            # Buscar archivos de estructuras (RS)
-            for file in files:
-                if file.startswith("RS.") or file.startswith("RS_"):
-                    structure_path = os.path.join(root, file)
-                    structure_files.append(structure_path)
-            
-            # Buscar series de imágenes DICOM
-            series_ids = sitk.ImageSeriesReader.GetGDCMSeriesIDs(root)
-            for series_id in series_ids:
-                series_files = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(root, series_id)
-                if series_files:
-                    image_series.append((series_id, root, series_files))
-        except Exception as e:
-            st.sidebar.warning(f"Advertencia al buscar en {root}: {str(e)}")
-            continue
+    for root, _, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            try:
+                # Intenta leer el header para identificar el tipo de archivo
+                dcm = pydicom.dcmread(file_path, force=True, stop_before_pixels=True)
+                
+                # Identificar archivos RTStruct
+                if hasattr(dcm, 'Modality') and dcm.Modality == 'RTSTRUCT':
+                    struct_files.append(file_path)
+                # Para otros tipos de DICOM (imágenes)
+                elif hasattr(dcm, 'SOPClassUID'):
+                    # Solo agregar si parece ser una imagen
+                    if (hasattr(dcm, 'Modality') and 
+                        dcm.Modality in ['CT', 'MR', 'PT', 'US']):
+                        series_uid = dcm.SeriesInstanceUID if hasattr(dcm, 'SeriesInstanceUID') else 'unknown'
+                        img_series.append((file_path, series_uid, dcm.Modality if hasattr(dcm, 'Modality') else 'unknown'))
+            except Exception:
+                # Si no se puede leer como DICOM, ignorar
+                continue
     
-    return image_series, structure_files
+    # Agrupar por SeriesInstanceUID
+    series_dict = {}
+    for file_path, series_uid, modality in img_series:
+        if series_uid not in series_dict:
+            series_dict[series_uid] = {'files': [], 'modality': modality}
+        series_dict[series_uid]['files'].append(file_path)
+    
+    return series_dict, struct_files
 
-def apply_window_level(image, window_width, window_center, is_negative=False):
-    """Aplica ventana y nivel a la imagen (brillo y contraste)"""
-    # Convertir la imagen a float
+def load_image_series(files):
+    """Carga una serie de archivos DICOM como una imagen 3D"""
+    reader = sitk.ImageSeriesReader()
+    reader.SetFileNames(files)
+    reader.MetaDataDictionaryArrayUpdateOn()
+    reader.LoadPrivateTagsOn()
+    try:
+        image = reader.Execute()
+        return reader, sitk.GetArrayFromImage(image)
+    except Exception as e:
+        st.sidebar.error(f"Error al cargar imagen: {str(e)}")
+        return None, None
+
+def load_structure_file(file_path, img_data=None):
+    """Carga un archivo RTStruct y extrae las estructuras"""
+    try:
+        struct = pydicom.dcmread(file_path, force=True)
+        
+        if not hasattr(struct, 'ROIContourSequence'):
+            return None
+        
+        structures = {}
+        roi_names = {}
+        
+        # Mapear ROI números a nombres
+        if hasattr(struct, 'StructureSetROISequence'):
+            for roi in struct.StructureSetROISequence:
+                if hasattr(roi, 'ROINumber') and hasattr(roi, 'ROIName'):
+                    roi_names[roi.ROINumber] = roi.ROIName
+        
+        # Extraer contornos
+        for roi in struct.ROIContourSequence:
+            if not hasattr(roi, 'ContourSequence'):
+                continue
+                
+            roi_number = roi.ReferencedROINumber if hasattr(roi, 'ReferencedROINumber') else 0
+            name = roi_names.get(roi_number, f"ROI-{roi_number}")
+            
+            # Obtener color si está disponible
+            if hasattr(roi, 'ROIDisplayColor'):
+                color = [float(c)/255 for c in roi.ROIDisplayColor]
+            else:
+                color = [1.0, 0.0, 0.0]  # Rojo por defecto
+            
+            contours = []
+            for contour in roi.ContourSequence:
+                if not hasattr(contour, 'ContourData') or not hasattr(contour, 'ContourGeometricType'):
+                    continue
+                    
+                points = contour.ContourData
+                if contour.ContourGeometricType == 'CLOSED_PLANAR':
+                    # Agrupar puntos en coordenadas (x,y,z)
+                    coords = [(points[i], points[i+1], points[i+2]) 
+                              for i in range(0, len(points), 3)]
+                    
+                    contours.append({
+                        'coords': np.array(coords),
+                        'z': coords[0][2] if coords else 0  # Coord Z del primer punto
+                    })
+            
+            structures[name] = {
+                'contours': contours,
+                'color': color
+            }
+        
+        return structures
+        
+    except Exception as e:
+        st.sidebar.error(f"Error al cargar estructuras: {str(e)}")
+        return None
+
+def apply_window_level(image, window_width, window_center):
+    """Aplica ventana y nivel a la imagen"""
     image_float = image.astype(float)
-    
-    # Calcular los límites de la ventana
     min_value = window_center - window_width/2.0
     max_value = window_center + window_width/2.0
-    
-    # Aplicar la ventana
     image_windowed = np.clip(image_float, min_value, max_value)
-    
-    # Normalizar a [0, 1] para visualización
     if max_value != min_value:
         image_windowed = (image_windowed - min_value) / (max_value - min_value)
     else:
         image_windowed = np.zeros_like(image_float)
-    
-    # Invertir si es necesario
-    if is_negative:
-        image_windowed = 1.0 - image_windowed
-    
     return image_windowed
 
-def read_structures(structure_file_path):
-    """Lee los archivos de estructura (RS) y extrae contornos"""
-    try:
-        reader = sitk.ImageFileReader()
-        reader.SetFileName(structure_file_path)
-        reader.LoadPrivateTagsOn()
-        reader.ReadImageInformation()
+def plot_with_structures(vol, slice_ix, window_width, window_center, structures=None, image_to_patient=None):
+    """Dibuja un slice con estructuras sobrepuestas"""
+    fig, ax = plt.subplots(figsize=(12, 10))
+    plt.axis('off')
+    
+    # Mostrar imagen base
+    selected_slice = vol[slice_ix, :, :]
+    windowed_slice = apply_window_level(selected_slice, window_width, window_center)
+    ax.imshow(windowed_slice, origin='lower', cmap='gray')
+    
+    # Dibujar estructuras si hay
+    if structures and image_to_patient:
+        # Obtener posición Z del slice actual en coords del paciente
+        z_pos = image_to_patient(0, 0, slice_ix)[2]
+        z_tolerance = 2.0  # Tolerancia en mm
         
-        # Extraer información básica de las estructuras
-        structures = []
-        
-        # Intentar leer las estructuras mediante SimpleITK
-        try:
-            # Obtener número de ROIs
-            roi_count = 0
-            if reader.HasMetaDataKey('3006|0020'):
-                roi_count_str = reader.GetMetaDataValue('3006|0020')
-                roi_count = int(roi_count_str) if roi_count_str.strip() else 0
+        for name, struct in structures.items():
+            color = struct['color']
             
-            # Para cada ROI, extraer nombre y color si está disponible
-            for i in range(roi_count):
-                structure_name = f"Estructura {i+1}"
-                color = [1.0, 0.0, 0.0]  # Rojo por defecto
-                
-                # Aquí habría que extraer la información detallada
-                # En un caso real, necesitaríamos analizar más etiquetas DICOM
-                
-                structures.append({
-                    'name': structure_name,
-                    'color': color,
-                    'contours': []  # Los contornos reales vendrían del archivo DICOM
-                })
-        except Exception as e:
-            st.warning(f"No se pudieron extraer detalles de estructuras: {str(e)}")
-            
-        return structures
-    except Exception as e:
-        st.error(f"Error al leer archivo de estructuras: {str(e)}")
-        return []
-
-def plot_multi_view(vol, current_slice, window_width, window_center, is_negative=False, structures=None):
-    """
-    Genera una visualización con las tres vistas ortogonales: axial, coronal y sagital
-    """
-    # Crear la figura con 3 subplots
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            for contour in struct['contours']:
+                # Solo dibujar si está cerca del slice actual
+                if abs(contour['z'] - z_pos) <= z_tolerance:
+                    points = contour['coords']
+                    
+                    # Convertir puntos a coordenadas de imagen
+                    image_points = []
+                    for p in points:
+                        i, j, _ = patient_to_image(p, image_to_patient)
+                        image_points.append((j, i))  # Note: j,i order for display
+                    
+                    # Crear y dibujar polígono
+                    if len(image_points) > 2:
+                        polygon = patches.Polygon(image_points, 
+                                                 closed=True, 
+                                                 fill=False, 
+                                                 edgecolor=color, 
+                                                 linewidth=2)
+                        ax.add_patch(polygon)
     
-    # Extraer las dimensiones
-    depth, height, width = vol.shape
-    
-    # Asegurarse de que los índices están dentro de los límites
-    z = np.clip(current_slice[0], 0, depth-1)
-    y = np.clip(current_slice[1], 0, height-1)
-    x = np.clip(current_slice[2], 0, width-1)
-    
-    # Extraer los tres cortes ortogonales
-    slice_axial = vol[z, :, :]  # Vista axial (XY)
-    slice_coronal = vol[:, y, :]  # Vista coronal (XZ)
-    slice_sagittal = vol[:, :, x]  # Vista sagital (YZ)
-    
-    # Aplicar ventana/nivel a cada vista
-    axial_windowed = apply_window_level(slice_axial, window_width, window_center, is_negative)
-    coronal_windowed = apply_window_level(slice_coronal, window_width, window_center, is_negative)
-    sagittal_windowed = apply_window_level(slice_sagittal, window_width, window_center, is_negative)
-    
-    # Mostrar las tres vistas
-    axes[0].imshow(axial_windowed, origin='lower', cmap='gray')
-    axes[0].axhline(y=y, color='r', linestyle='-', alpha=0.5)
-    axes[0].axvline(x=x, color='b', linestyle='-', alpha=0.5)
-    axes[0].set_title('Vista Axial')
-    axes[0].axis('off')
-    
-    axes[1].imshow(np.rot90(coronal_windowed), origin='lower', cmap='gray')
-    axes[1].axhline(y=depth-z, color='r', linestyle='-', alpha=0.5)
-    axes[1].axvline(x=x, color='g', linestyle='-', alpha=0.5)
-    axes[1].set_title('Vista Coronal')
-    axes[1].axis('off')
-    
-    axes[2].imshow(np.rot90(sagittal_windowed), origin='lower', cmap='gray')
-    axes[2].axhline(y=depth-z, color='b', linestyle='-', alpha=0.5)
-    axes[2].axvline(x=height-y, color='g', linestyle='-', alpha=0.5)
-    axes[2].set_title('Vista Sagital')
-    axes[2].axis('off')
-    
-    # Dibujar contornos si están disponibles
-    if structures:
-        for structure in structures:
-            color = structure.get('color', [1.0, 0.0, 0.0])  # Rojo por defecto
-            # Aquí dibujaríamos los contornos reales si estuvieran disponibles
-            # En esta versión simplificada, dibujamos un círculo representativo
-            circle = patches.Circle((width/2, height/2), radius=20, 
-                                   edgecolor=color, facecolor='none', alpha=0.7)
-            axes[0].add_patch(circle)
-    
-    plt.tight_layout()
     return fig
 
-# Define los presets de ventana
+def patient_to_image(patient_point, image_to_patient):
+    """Convierte coordenadas de paciente a índices de imagen"""
+    # Esta es una aproximación simple - para una implementación completa
+    # necesitarías usar la matriz de transformación inversa
+    px, py, pz = patient_point
+    
+    # Para simplificar, asumimos que las coordenadas están ya alineadas
+    # En un caso real, necesitarías usar la matriz de transformación inversa
+    origin = image_to_patient(0, 0, 0)
+    spacing = [1.0, 1.0, 1.0]  # Esto debe venir de los metadatos
+    
+    # Calcular índices
+    i = int(round((px - origin[0]) / spacing[0]))
+    j = int(round((py - origin[1]) / spacing[1]))
+    k = int(round((pz - origin[2]) / spacing[2]))
+    
+    return i, j, k
+
+# Presets de ventana
 radiant_presets = {
     "Default window": (0, 0),
-    "Full dynamic": (0, 0),
     "CT Abdomen": (350, 50),
     "CT Angio": (600, 300),
     "CT Bone": (2000, 350),
@@ -233,176 +229,174 @@ radiant_presets = {
 }
 
 # Procesar archivos subidos
-temp_dir = None
 if uploaded_file is not None:
-    # Crear un directorio temporal para extraer los archivos
+    # Crear directorio temporal
     temp_dir = tempfile.mkdtemp()
+    
     try:
-        # Leer el contenido del ZIP
+        # Extraer ZIP
         with zipfile.ZipFile(io.BytesIO(uploaded_file.read()), 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
         
         st.sidebar.markdown('<div class="success-box">Archivos extraídos correctamente.</div>', unsafe_allow_html=True)
+        
+        # Buscar archivos DICOM e identificar tipos
+        with st.spinner('Buscando archivos DICOM...'):
+            series_dict, struct_files = find_dicom_files(temp_dir)
+        
+        if not series_dict:
+            st.sidebar.error("No se encontraron imágenes DICOM válidas.")
+        else:
+            # Mostrar series encontradas
+            st.sidebar.markdown(f'<div class="info-box">Se encontraron {len(series_dict)} series de imágenes</div>', unsafe_allow_html=True)
+            
+            # Seleccionar serie
+            series_options = [f"{modality} Serie {i+1}: {uid[:8]}... ({len(files['files'])} imágenes)" 
+                            for i, (uid, files) in enumerate(series_dict.items()) 
+                            for modality in [files['modality']]]
+            
+            selected_series_option = st.sidebar.selectbox("Seleccionar serie:", series_options)
+            selected_idx = series_options.index(selected_series_option)
+            selected_series_uid = list(series_dict.keys())[selected_idx]
+            
+            # Cargar imágenes
+            reader, img = load_image_series(series_dict[selected_series_uid]['files'])
+            
+            if img is not None:
+                n_slices = img.shape[0]
+                slice_ix = st.sidebar.slider('Seleccionar corte', 0, n_slices - 1, int(n_slices/2))
+                output = st.sidebar.radio('Visualización', ['Imagen', 'Metadatos'], index=0)
+                
+                # Cargar estructuras si existen
+                structures = None
+                if struct_files:
+                    st.sidebar.markdown(f'<div class="info-box">Archivos de estructuras: {len(struct_files)}</div>', unsafe_allow_html=True)
+                    show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
+                    
+                    if show_structures:
+                        for struct_file in struct_files:
+                            try:
+                                structures = load_structure_file(struct_file)
+                                if structures:
+                                    break  # Usar el primer archivo de estructuras válido
+                            except Exception as e:
+                                st.sidebar.warning(f"No se pudo leer estructura: {e}")
+                
+                # Definir función de transformación simple para mapeo
+                def image_to_patient(i, j, k):
+                    # Leer origen y espaciado desde los metadatos si es posible
+                    # Esta es una aproximación simplificada
+                    try:
+                        origin = [0, 0, 0]
+                        spacing = [1, 1, 1]
+                        x = origin[0] + i * spacing[0]
+                        y = origin[1] + j * spacing[1]
+                        z = origin[2] + k * spacing[2]
+                        return (x, y, z)
+                    except:
+                        return (i, j, k)  # Fallback
+                
+                # Ajustes de ventana para visualización
+                if output == 'Imagen':
+                    min_val = float(img.min())
+                    max_val = float(img.max())
+                    range_val = max_val - min_val
+                    
+                    default_window_width = range_val
+                    default_window_center = min_val + (range_val / 2)
+                    
+                    # Actualizar presets automáticos
+                    radiant_presets["Default window"] = (default_window_width, default_window_center)
+                    
+                    selected_preset = st.sidebar.selectbox(
+                        "Presets radiológicos",
+                        list(radiant_presets.keys())
+                    )
+                    
+                    # Inicializar valores de ventana
+                    window_width, window_center = radiant_presets[selected_preset]
+                    is_negative = selected_preset == "Negative"
+                    
+                    if is_negative:
+                        window_width = default_window_width
+                        window_center = default_window_center
+                    
+                    # Ajustes personalizados
+                    if selected_preset == "Custom window":
+                        st.sidebar.markdown('<p class="sub-header">Ajustes personalizados</p>', unsafe_allow_html=True)
+                        st.sidebar.markdown(f"**Rango de valores:** {min_val:.1f} a {max_val:.1f}")
+                        
+                        col1, col2 = st.sidebar.columns(2)
+                        with col1:
+                            window_width = float(st.number_input("Ancho (WW)", min_value=1.0, max_value=range_val * 2, value=float(default_window_width), format="%.1f"))
+                        with col2:
+                            window_center = float(st.number_input("Centro (WL)", min_value=min_val - range_val, max_value=max_val + range_val, value=float(default_window_center), format="%.1f"))
+    
     except Exception as e:
-        st.sidebar.error(f"Error al extraer el archivo ZIP: {str(e)}")
+        st.sidebar.error(f"Error al procesar archivos: {str(e)}")
+        img = None
 
-# Inicializar variables para la visualización
-img = None
-structures = []
-
-# Título grande siempre visible
+# Visualización principal
 st.markdown('<p class="giant-title">Brachyanalysis</p>', unsafe_allow_html=True)
 
-if temp_dir is not None:
-    # Buscar series DICOM y archivos de estructura
-    with st.spinner('Buscando archivos DICOM...'):
-        image_series, structure_files = find_dicom_files(temp_dir)
-    
-    # Procesar archivos de estructura si existen
-    if structure_files:
-        st.sidebar.markdown(f'<div class="info-box">Se encontraron {len(structure_files)} archivos de estructura</div>', unsafe_allow_html=True)
-        # Leer el primer archivo de estructuras
-        if len(structure_files) > 0:
-            structures = read_structures(structure_files[0])
-            st.sidebar.markdown(f'<div class="success-box">Se cargaron {len(structures)} estructuras</div>', unsafe_allow_html=True)
-    
-    # Procesar series de imágenes
-    if not image_series:
-        st.sidebar.error("No se encontraron archivos DICOM de imagen válidos.")
-    else:
-        st.sidebar.markdown(f'<div class="info-box">Se encontraron {len(image_series)} series DICOM</div>', unsafe_allow_html=True)
+if 'img' in locals() and img is not None:
+    if output == 'Imagen':
+        st.markdown('<p class="sub-header">Visualización DICOM</p>', unsafe_allow_html=True)
         
-        # Si hay múltiples series, permitir seleccionar una
-        selected_series_idx = 0
-        if len(image_series) > 1:
-            series_options = [f"Serie {i+1}: {series_id[:10]}... ({len(files)} archivos)" 
-                            for i, (series_id, _, files) in enumerate(image_series)]
-            selected_series_option = st.sidebar.selectbox("Seleccionar serie DICOM:", series_options)
-            selected_series_idx = series_options.index(selected_series_option)
+        # Dibujar imagen con/sin estructuras
+        if 'is_negative' in locals() and is_negative:
+            # Invertir la imagen
+            fig, ax = plt.subplots(figsize=(12, 10))
+            plt.axis('off')
+            selected_slice = img[slice_ix, :, :]
+            windowed_slice = apply_window_level(selected_slice, window_width, window_center)
+            windowed_slice = 1.0 - windowed_slice  # Invertir
+            ax.imshow(windowed_slice, origin='lower', cmap='gray')
+            st.pyplot(fig)
+        else:
+            # Imagen normal con estructuras si hay
+            if 'structures' in locals() and structures and 'image_to_patient' in locals():
+                fig = plot_with_structures(img, slice_ix, window_width, window_center, structures, image_to_patient)
+            else:
+                fig, ax = plt.subplots(figsize=(12, 10))
+                plt.axis('off')
+                selected_slice = img[slice_ix, :, :]
+                windowed_slice = apply_window_level(selected_slice, window_width, window_center)
+                ax.imshow(windowed_slice, origin='lower', cmap='gray')
+            st.pyplot(fig)
         
+        # Información adicional
+        info_cols = st.columns(6)
+        with info_cols[0]:
+            st.markdown(f"**Dimensiones:** {img.shape[1]} x {img.shape[2]} px")
+        with info_cols[1]:
+            st.markdown(f"**Total cortes:** {n_slices}")
+        with info_cols[2]:
+            st.markdown(f"**Corte actual:** {slice_ix + 1}")
+        with info_cols[3]:
+            st.markdown(f"**Min/Max:** {img[slice_ix].min():.1f} / {img[slice_ix].max():.1f}")
+        with info_cols[4]:
+            st.markdown(f"**Ancho (WW):** {window_width:.1f}")
+        with info_cols[5]:
+            st.markdown(f"**Centro (WL):** {window_center:.1f}")
+            
+    elif output == 'Metadatos' and 'reader' in locals() and reader is not None:
+        st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
         try:
-            # Obtener la serie seleccionada
-            series_id, series_dir, dicom_names = image_series[selected_series_idx]
-            
-            reader = sitk.ImageSeriesReader()
-            reader.SetFileNames(dicom_names)
-            reader.LoadPrivateTagsOn()
-            reader.MetaDataDictionaryArrayUpdateOn()
-            data = reader.Execute()
-            img = sitk.GetArrayViewFromImage(data)
-        
-            # Obtener dimensiones
-            depth, height, width = img.shape
-            
-            # Configurar sliders para cada dimensión
-            st.sidebar.markdown('<p class="sub-header">Navegación</p>', unsafe_allow_html=True)
-            z_slice = st.sidebar.slider('Corte Axial (Z)', 0, depth - 1, int(depth/2))
-            y_slice = st.sidebar.slider('Corte Coronal (Y)', 0, height - 1, int(height/2))
-            x_slice = st.sidebar.slider('Corte Sagital (X)', 0, width - 1, int(width/2))
-            
-            current_slice = [z_slice, y_slice, x_slice]
-            
-            # Seleccionar tipo de visualización
-            output = st.sidebar.radio('Tipo de visualización', ['Imagen', 'Metadatos'], index=0)
-            
-            # Añadir controles de ventana si la salida es Imagen
-            if output == 'Imagen':
-                # Calcular valores iniciales para la ventana
-                min_val = float(img.min())
-                max_val = float(img.max())
-                range_val = max_val - min_val
-                
-                # Establecer valores predeterminados para window width y center
-                default_window_width = range_val
-                default_window_center = min_val + (range_val / 2)
-                
-                # Añadir presets de ventana
-                st.sidebar.markdown('<p class="sub-header">Presets de ventana</p>', unsafe_allow_html=True)
-                
-                # Actualizar los presets automáticos
-                radiant_presets["Default window"] = (default_window_width, default_window_center)
-                radiant_presets["Full dynamic"] = (range_val, min_val + (range_val / 2))
-                
-                selected_preset = st.sidebar.selectbox(
-                    "Presets radiológicos",
-                    list(radiant_presets.keys())
-                )
-                
-                # Inicializar valores de ventana basados en el preset
-                window_width, window_center = radiant_presets[selected_preset]
-                
-                # Si es preset negativo, invertir la imagen
-                is_negative = selected_preset == "Negative"
-                
-                # Si es un preset personalizado, mostrar los campos de entrada
-                if selected_preset == "Custom window":
-                    st.sidebar.markdown('<p class="sub-header">Ajustes personalizados</p>', unsafe_allow_html=True)
-                    
-                    # Mostrar información sobre el rango
-                    st.sidebar.markdown(f"**Rango de valores:** {min_val:.1f} a {max_val:.1f}")
-                    
-                    # Crear dos columnas para los campos de entrada
-                    col1, col2 = st.sidebar.columns(2)
-                    
-                    with col1:
-                        window_width = float(st.number_input(
-                            "Ancho de ventana (WW)",
-                            min_value=1.0,
-                            max_value=range_val * 2,
-                            value=float(default_window_width),
-                            format="%.1f"
-                        ))
-                    
-                    with col2:
-                        window_center = float(st.number_input(
-                            "Centro de ventana (WL)",
-                            min_value=min_val - range_val,
-                            max_value=max_val + range_val,
-                            value=float(default_window_center),
-                            format="%.1f"
-                        ))
-                
-                # Toggle para mostrar/ocultar estructuras
-                show_structures = st.sidebar.checkbox("Mostrar delimitaciones", value=True)
-                structures_to_display = structures if show_structures else None
-                
-                # Mostrar visualización multi-vista
-                st.markdown('<p class="sub-header">Visualización DICOM Multiplanar</p>', unsafe_allow_html=True)
-                fig = plot_multi_view(img, current_slice, window_width, window_center, is_negative, structures_to_display)
-                st.pyplot(fig)
-                
-                # Información adicional sobre la imagen y los ajustes actuales
-                info_cols = st.columns(3)
-                with info_cols[0]:
-                    st.markdown(f"**Dimensiones:** {width} x {height} x {depth} px")
-                with info_cols[1]:
-                    st.markdown(f"**Min/Max:** {min_val:.1f} / {max_val:.1f}")
-                with info_cols[2]:
-                    st.markdown(f"**Ventana:** WW={window_width:.1f}, WL={window_center:.1f}")
-                
-            elif img is not None and output == 'Metadatos':
-                st.markdown('<p class="sub-header">Metadatos DICOM</p>', unsafe_allow_html=True)
-                try:
-                    metadata = dict()
-                    for k in reader.GetMetaDataKeys(z_slice):
-                        metadata[k] = reader.GetMetaData(z_slice, k)
-                    df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
-                    st.dataframe(df, height=600)
-                except Exception as e:
-                    st.error(f"Error al leer metadatos: {str(e)}")
+            metadata = dict()
+            for k in reader.GetMetaDataKeys(slice_ix):
+                metadata[k] = reader.GetMetaData(slice_ix, k)
+            df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
+            st.dataframe(df, height=600)
         except Exception as e:
-            st.error(f"Error al procesar los archivos DICOM: {str(e)}")
-            st.write("Detalles del error:", str(e))
+            st.error(f"Error al leer metadatos: {str(e)}")
 else:
-    # Página de inicio cuando no hay imágenes cargadas
+    # Página de inicio
     st.markdown('<p class="sub-header">Visualizador de imágenes DICOM</p>', unsafe_allow_html=True)
-    
     st.markdown("""
     <div style="text-align: center; padding: 40px; margin-top: 10px;">
-        <img src="https://raw.githubusercontent.com/SimpleITK/SimpleITK/master/Documentation/docs/images/simpleitk-logo.svg" alt="SimpleITK Logo" width="200">
         <h2 style="color: #28aec5; margin-top: 20px;">Carga un archivo ZIP con tus imágenes DICOM</h2>
         <p style="font-size: 18px; margin-top: 10px;">Utiliza el panel lateral para subir tus archivos y visualizarlos</p>
-        <p style="font-size: 16px; margin-top: 10px;">El visor mostrará vistas axial, coronal y sagital simultáneamente</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -410,6 +404,6 @@ else:
 st.markdown("""
 <hr style="margin-top: 30px;">
 <div style="text-align: center; color: #28aec5; font-size: 14px;">
-    Brachyanalysis - Visualizador multiplanar de imágenes DICOM
+    Brachyanalysis - Visualizador de imágenes DICOM
 </div>
 """, unsafe_allow_html=True)
