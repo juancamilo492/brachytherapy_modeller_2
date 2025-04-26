@@ -14,24 +14,47 @@ import matplotlib.patches as patches
 # ----------------------------
 
 def load_dicom_series(directory):
-    """Carga una serie DICOM 3D"""
-    reader = sitk.ImageSeriesReader()
-    series_IDs = reader.GetGDCMSeriesIDs(directory)
-    if not series_IDs:
+    """Carga manualmente imágenes DICOM desde un directorio"""
+    dicom_files = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            path = os.path.join(root, file)
+            try:
+                dcm = pydicom.dcmread(path, force=True)
+                if hasattr(dcm, 'pixel_array'):
+                    dicom_files.append((path, dcm))
+            except Exception:
+                continue
+    
+    if not dicom_files:
         return None, None
-    series_files = reader.GetGDCMSeriesFileNames(directory, series_IDs[0])
-    reader.SetFileNames(series_files)
-    image = reader.Execute()
-    volume = sitk.GetArrayFromImage(image)  # (slices, rows, cols)
+
+    # Ordenar por InstanceNumber si existe
+    dicom_files.sort(key=lambda x: getattr(x[1], 'InstanceNumber', 0))
+    
+    # Crear volumen
+    slices = [d[1].pixel_array for d in dicom_files]
+    volume = np.stack(slices)
+
+    # Obtener info de volumen
+    sample = dicom_files[0][1]
+    spacing = getattr(sample, 'PixelSpacing', [1,1]) + [getattr(sample, 'SliceThickness', 1)]
+    origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
+    direction = getattr(sample, 'ImageOrientationPatient', [1,0,0,0,1,0])
+    direction = np.array([
+        direction[0], direction[3], 0,
+        direction[1], direction[4], 0,
+        direction[2], direction[5], 1
+    ])
     
     volume_info = {
-        'spacing': image.GetSpacing(),     # (x, y, z)
-        'origin': image.GetOrigin(),
-        'direction': image.GetDirection(), # 9 valores (3x3 matriz)
-        'transform': image.GetDirection(), # Para cálculo directo
-        'sitk_image': image
+        'spacing': spacing,
+        'origin': origin,
+        'direction': direction,
+        'sitk_image': None  # No usamos SITK en este modo
     }
     return volume, volume_info
+
 
 def load_rtstruct(path, volume_info):
     """Carga contornos RTSTRUCT"""
