@@ -42,6 +42,8 @@ def find_dicom_files(directory):
     """Busca archivos DICOM en el directorio y clasifica por tipo"""
     img_series = []
     struct_files = []
+    dose_files = []
+    plan_files = []
     
     for root, _, files in os.walk(directory):
         for file in files:
@@ -50,16 +52,17 @@ def find_dicom_files(directory):
                 # Intenta leer el header para identificar el tipo de archivo
                 dcm = pydicom.dcmread(file_path, force=True, stop_before_pixels=True)
                 
-                # Identificar archivos RTStruct
-                if hasattr(dcm, 'Modality') and dcm.Modality == 'RTSTRUCT':
-                    struct_files.append(file_path)
-                # Para otros tipos de DICOM (imágenes)
-                elif hasattr(dcm, 'SOPClassUID'):
-                    # Solo agregar si parece ser una imagen
-                    if (hasattr(dcm, 'Modality') and 
-                        dcm.Modality in ['CT', 'MR', 'PT', 'US']):
+                # Clasificar por modalidad
+                if hasattr(dcm, 'Modality'):
+                    if dcm.Modality == 'RTSTRUCT':
+                        struct_files.append(file_path)
+                    elif dcm.Modality == 'RTDOSE':
+                        dose_files.append(file_path)
+                    elif dcm.Modality == 'RTPLAN':
+                        plan_files.append(file_path)
+                    elif dcm.Modality in ['CT', 'MR', 'PT', 'US']:
                         series_uid = dcm.SeriesInstanceUID if hasattr(dcm, 'SeriesInstanceUID') else 'unknown'
-                        img_series.append((file_path, series_uid, dcm.Modality if hasattr(dcm, 'Modality') else 'unknown'))
+                        img_series.append((file_path, series_uid, dcm.Modality))
             except Exception:
                 # Si no se puede leer como DICOM, ignorar
                 continue
@@ -71,27 +74,146 @@ def find_dicom_files(directory):
             series_dict[series_uid] = {'files': [], 'modality': modality}
         series_dict[series_uid]['files'].append(file_path)
     
-    return series_dict, struct_files
+    # Ordenar archivos de cada serie
+    for series in series_dict.values():
+        try:
+            # Intentar ordenar por número de instancia
+            series['files'] = sorted(series['files'], 
+                                    key=lambda x: pydicom.dcmread(x, force=True, stop_before_pixels=True).InstanceNumber 
+                                    if hasattr(pydicom.dcmread(x, force=True, stop_before_pixels=True), 'InstanceNumber') 
+                                    else 0)
+        except:
+            # Si falla, mantener el orden original
+            pass
+    
+    return series_dict, struct_files, dose_files, plan_files
+
+def get_image_orientation(dcm):
+    """Extrae la orientación de la imagen"""
+    if hasattr(dcm, 'ImageOrientationPatient'):
+        return np.array(dcm.ImageOrientationPatient)
+    else:
+        return np.array([1, 0, 0, 0, 1, 0])  # Default orientation
+
+def get_image_position(dcm):
+    """Extrae la posición de la imagen"""
+    if hasattr(dcm, 'ImagePositionPatient'):
+        return np.array(dcm.ImagePositionPatient)
+    else:
+        return np.array([0, 0, 0])  # Default position
+
+def get_pixel_spacing(dcm):
+    """Extrae el espaciado de píxeles"""
+    if hasattr(dcm, 'PixelSpacing'):
+        return np.array(dcm.PixelSpacing)
+    else:
+        return np.array([1, 1])  # Default spacing
 
 def load_image_series(files):
     """Carga una serie de archivos DICOM como una imagen 3D"""
-    reader = sitk.ImageSeriesReader()
-    reader.SetFileNames(files)
-    reader.MetaDataDictionaryArrayUpdateOn()
-    reader.LoadPrivateTagsOn()
     try:
+        # Primero intentamos con SimpleITK
+        reader = sitk.ImageSeriesReader()
+        reader.SetFileNames(files)
+        reader.MetaDataDictionaryArrayUpdateOn()
+        reader.LoadPrivateTagsOn()
         image = reader.Execute()
-        return reader, sitk.GetArrayFromImage(image)
+        
+        # Extraer metadatos importantes para transformaciones
+        spacing = image.GetSpacing()
+        origin = image.GetOrigin()
+        direction = image.GetDirection()
+        
+        # Crear matriz de transformación
+        transform_matrix = np.array([
+            [direction[0]*spacing[0], direction[3]*spacing[1], direction[6]*spacing[2], origin[0]],
+            [direction[1]*spacing[0], direction[4]*spacing[1], direction[7]*spacing[2], origin[1]],
+            [direction[2]*spacing[0], direction[5]*spacing[1], direction[8]*spacing[2], origin[2]],
+            [0, 0, 0, 1]
+        ])
+        
+        # Obtener array de la imagen
+        img_array = sitk.GetArrayFromImage(image)
+        
+        # Crear información del volumen para mapeo
+        volume_info = {
+            'spacing': spacing,
+            'origin': origin,
+            'direction': direction,
+            'transform': transform_matrix,
+            'inverse_transform': np.linalg.inv(transform_matrix),
+            'dimensions': img_array.shape
+        }
+        
+        return reader, img_array, volume_info
+    
     except Exception as e:
-        st.sidebar.error(f"Error al cargar imagen: {str(e)}")
-        return None, None
+        st.sidebar.error(f"Error al cargar imagen con SimpleITK: {str(e)}")
+        try:
+            # Fallback: utilizar pydicom directamente
+            first_dcm = pydicom.dcmread(files[0])
+            
+            # Extraer información de posición y orientación
+            orientation = get_image_orientation(first_dcm)
+            position = get_image_position(first_dcm)
+            spacing_xy = get_pixel_spacing(first_dcm)
+            
+            # Calcular spacing Z basado en archivos consecutivos
+            if len(files) > 1:
+                second_dcm = pydicom.dcmread(files[1])
+                second_position = get_image_position(second_dcm)
+                spacing_z = np.linalg.norm(position - second_position)
+            else:
+                spacing_z = 1.0  # Default si solo hay un archivo
+            
+            # Cargar todos los slices
+            slices = []
+            for file in files:
+                dcm = pydicom.dcmread(file)
+                if hasattr(dcm, 'pixel_array'):
+                    slices.append(dcm.pixel_array)
+            
+            # Convertir a array 3D
+            if slices:
+                img_array = np.stack(slices)
+                
+                # Calcular transformación
+                row_vec = orientation[:3]
+                col_vec = orientation[3:]
+                normal_vec = np.cross(row_vec, col_vec)
+                
+                # Construir matriz de transformación
+                transform_matrix = np.zeros((4, 4))
+                transform_matrix[:3, 0] = row_vec * spacing_xy[0]
+                transform_matrix[:3, 1] = col_vec * spacing_xy[1]
+                transform_matrix[:3, 2] = normal_vec * spacing_z
+                transform_matrix[:3, 3] = position
+                transform_matrix[3, 3] = 1.0
+                
+                # Información del volumen
+                volume_info = {
+                    'spacing': (spacing_xy[0], spacing_xy[1], spacing_z),
+                    'origin': position,
+                    'direction': np.concatenate([row_vec, col_vec, normal_vec]),
+                    'transform': transform_matrix,
+                    'inverse_transform': np.linalg.inv(transform_matrix),
+                    'dimensions': img_array.shape
+                }
+                
+                return None, img_array, volume_info
+            else:
+                return None, None, None
+        except Exception as e:
+            st.sidebar.error(f"Error al cargar imagen con pydicom: {str(e)}")
+            return None, None, None
 
-def load_structure_file(file_path, img_data=None):
+def load_structure_file(file_path, volume_info=None):
     """Carga un archivo RTStruct y extrae las estructuras"""
     try:
         struct = pydicom.dcmread(file_path, force=True)
         
         if not hasattr(struct, 'ROIContourSequence'):
+            st.sidebar.warning("Archivo RTStruct no contiene contornos")
             return None
         
         structures = {}
@@ -102,6 +224,17 @@ def load_structure_file(file_path, img_data=None):
             for roi in struct.StructureSetROISequence:
                 if hasattr(roi, 'ROINumber') and hasattr(roi, 'ROIName'):
                     roi_names[roi.ROINumber] = roi.ROIName
+        
+        # Verificar si hay referencia a serie de imagen
+        referenced_frame_uid = None
+        if hasattr(struct, 'ReferencedFrameOfReferenceSequence'):
+            for ref_frame in struct.ReferencedFrameOfReferenceSequence:
+                if hasattr(ref_frame, 'RTReferencedStudySequence'):
+                    for ref_study in ref_frame.RTReferencedStudySequence:
+                        if hasattr(ref_study, 'RTReferencedSeriesSequence'):
+                            for ref_series in ref_study.RTReferencedSeriesSequence:
+                                if hasattr(ref_series, 'SeriesInstanceUID'):
+                                    referenced_frame_uid = ref_series.SeriesInstanceUID
         
         # Extraer contornos
         for roi in struct.ROIContourSequence:
@@ -115,7 +248,12 @@ def load_structure_file(file_path, img_data=None):
             if hasattr(roi, 'ROIDisplayColor'):
                 color = [float(c)/255 for c in roi.ROIDisplayColor]
             else:
-                color = [1.0, 0.0, 0.0]  # Rojo por defecto
+                # Generar un color aleatorio pero reproducible
+                hash_val = hash(name) % 1000
+                r = (hash_val % 255) / 255.0
+                g = ((hash_val * 3) % 255) / 255.0
+                b = ((hash_val * 7) % 255) / 255.0
+                color = [r, g, b]
             
             contours = []
             for contour in roi.ContourSequence:
@@ -123,25 +261,31 @@ def load_structure_file(file_path, img_data=None):
                     continue
                     
                 points = contour.ContourData
-                if contour.ContourGeometricType == 'CLOSED_PLANAR':
+                if len(points) >= 6:  # Asegurar que hay al menos 2 puntos (x,y,z)
                     # Agrupar puntos en coordenadas (x,y,z)
-                    coords = [(points[i], points[i+1], points[i+2]) 
-                              for i in range(0, len(points), 3)]
+                    coords = np.array([(points[i], points[i+1], points[i+2]) 
+                                     for i in range(0, len(points), 3)])
+                    
+                    # Identificar el plano Z de este contorno
+                    z_values = coords[:, 2]
+                    z_plane = np.mean(z_values)
                     
                     contours.append({
-                        'coords': np.array(coords),
-                        'z': coords[0][2] if coords else 0  # Coord Z del primer punto
+                        'coords': coords,
+                        'z': z_plane
                     })
             
             structures[name] = {
                 'contours': contours,
-                'color': color
+                'color': color,
+                'referenced_uid': referenced_frame_uid
             }
         
         return structures
         
     except Exception as e:
         st.sidebar.error(f"Error al cargar estructuras: {str(e)}")
+        st.sidebar.write(f"Detalles: {e}")
         return None
 
 def apply_window_level(image, window_width, window_center):
@@ -156,7 +300,53 @@ def apply_window_level(image, window_width, window_center):
         image_windowed = np.zeros_like(image_float)
     return image_windowed
 
-def plot_with_structures(vol, slice_ix, window_width, window_center, structures=None, image_to_patient=None):
+def patient_to_image_coords(patient_points, volume_info):
+    """Convierte coordenadas de paciente a coordenadas de imagen"""
+    # Asegurar que la entrada es un array numpy
+    pts = np.array(patient_points)
+    
+    # Añadir columna de 1s para transformación homogénea
+    if pts.shape[1] == 3:
+        pts_homog = np.column_stack([pts, np.ones(pts.shape[0])])
+    else:
+        pts_homog = pts
+    
+    # Aplicar transformación inversa
+    img_points_homog = np.dot(volume_info['inverse_transform'], pts_homog.T).T
+    
+    # Obtener coordenadas de imagen (sin la última columna)
+    img_points = img_points_homog[:, :3]
+    
+    # Redondear a índices enteros
+    img_indices = np.round(img_points).astype(int)
+    
+    # Convertir a formato (slice, row, col) desde (x, y, z)
+    # En la mayoría de los casos necesitamos cambiar el orden de los ejes
+    dims = volume_info['dimensions']
+    # Esto depende de la orientación específica, ajustar según sea necesario
+    indices_swapped = np.zeros_like(img_indices)
+    
+    # Por defecto: x->col, y->row, z->slice
+    indices_swapped[:, 0] = dims[1] - img_indices[:, 1]  # row (invertido para visualización correcta)
+    indices_swapped[:, 1] = img_indices[:, 0]           # col
+    indices_swapped[:, 2] = dims[0] - img_indices[:, 2]  # slice (posiblemente invertido)
+    
+    return indices_swapped
+
+def get_slice_z_position(slice_idx, volume_info):
+    """Obtiene la posición Z del slice en el espacio del paciente"""
+    # Crear punto en coordenadas de imagen en el centro del slice
+    dims = volume_info['dimensions']
+    image_point = np.array([dims[2]//2, dims[1]//2, slice_idx, 1])
+    
+    # Transformar a coordenadas del paciente
+    patient_point = np.dot(volume_info['transform'], image_point)
+    
+    return patient_point[2]  # Valor Z
+
+def plot_with_structures(vol, slice_ix, window_width, window_center, 
+                         structures=None, volume_info=None, z_tolerance=3.0,
+                         show_struct_names=True):
     """Dibuja un slice con estructuras sobrepuestas"""
     fig, ax = plt.subplots(figsize=(12, 10))
     plt.axis('off')
@@ -166,54 +356,49 @@ def plot_with_structures(vol, slice_ix, window_width, window_center, structures=
     windowed_slice = apply_window_level(selected_slice, window_width, window_center)
     ax.imshow(windowed_slice, origin='lower', cmap='gray')
     
-    # Dibujar estructuras si hay
-    if structures and image_to_patient:
-        # Obtener posición Z del slice actual en coords del paciente
-        z_pos = image_to_patient(0, 0, slice_ix)[2]
-        z_tolerance = 2.0  # Tolerancia en mm
+    # Si no hay estructuras o info del volumen, salir
+    if not structures or not volume_info:
+        return fig
+    
+    # Obtener posición Z del slice actual en coords del paciente
+    z_pos = get_slice_z_position(slice_ix, volume_info)
+    
+    # Para mostrar nombres de estructuras
+    struct_names_drawn = set()
+    
+    # Dibujar estructuras
+    for name, struct in structures.items():
+        color = struct['color']
         
-        for name, struct in structures.items():
-            color = struct['color']
-            
-            for contour in struct['contours']:
-                # Solo dibujar si está cerca del slice actual
-                if abs(contour['z'] - z_pos) <= z_tolerance:
-                    points = contour['coords']
+        for contour in struct['contours']:
+            # Verificar si el contorno está cerca del slice actual
+            if abs(contour['z'] - z_pos) <= z_tolerance:
+                # Convertir contorno a coordenadas de imagen
+                pts = contour['coords']
+                img_points = patient_to_image_coords(pts, volume_info)
+                
+                # Extraer solo las filas y columnas (ignorando Z para dibujo 2D)
+                points_2d = img_points[:, :2]
+                
+                # Crear y dibujar polígono si hay suficientes puntos
+                if len(points_2d) > 2:
+                    polygon = patches.Polygon(points_2d, 
+                                             closed=True, 
+                                             fill=False, 
+                                             edgecolor=color, 
+                                             linewidth=2)
+                    ax.add_patch(polygon)
                     
-                    # Convertir puntos a coordenadas de imagen
-                    image_points = []
-                    for p in points:
-                        i, j, _ = patient_to_image(p, image_to_patient)
-                        image_points.append((j, i))  # Note: j,i order for display
-                    
-                    # Crear y dibujar polígono
-                    if len(image_points) > 2:
-                        polygon = patches.Polygon(image_points, 
-                                                 closed=True, 
-                                                 fill=False, 
-                                                 edgecolor=color, 
-                                                 linewidth=2)
-                        ax.add_patch(polygon)
+                    # Mostrar nombre si aún no se ha mostrado para esta estructura
+                    if show_struct_names and name not in struct_names_drawn:
+                        # Usar el centro del contorno para posicionar el texto
+                        center = np.mean(points_2d, axis=0)
+                        ax.text(center[0], center[1], name, color=color, 
+                                fontsize=9, ha='center', va='center',
+                                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+                        struct_names_drawn.add(name)
     
     return fig
-
-def patient_to_image(patient_point, image_to_patient):
-    """Convierte coordenadas de paciente a índices de imagen"""
-    # Esta es una aproximación simple - para una implementación completa
-    # necesitarías usar la matriz de transformación inversa
-    px, py, pz = patient_point
-    
-    # Para simplificar, asumimos que las coordenadas están ya alineadas
-    # En un caso real, necesitarías usar la matriz de transformación inversa
-    origin = image_to_patient(0, 0, 0)
-    spacing = [1.0, 1.0, 1.0]  # Esto debe venir de los metadatos
-    
-    # Calcular índices
-    i = int(round((px - origin[0]) / spacing[0]))
-    j = int(round((py - origin[1]) / spacing[1]))
-    k = int(round((pz - origin[2]) / spacing[2]))
-    
-    return i, j, k
 
 # Presets de ventana
 radiant_presets = {
@@ -242,7 +427,7 @@ if uploaded_file is not None:
         
         # Buscar archivos DICOM e identificar tipos
         with st.spinner('Buscando archivos DICOM...'):
-            series_dict, struct_files = find_dicom_files(temp_dir)
+            series_dict, struct_files, dose_files, plan_files = find_dicom_files(temp_dir)
         
         if not series_dict:
             st.sidebar.error("No se encontraron imágenes DICOM válidas.")
@@ -251,16 +436,15 @@ if uploaded_file is not None:
             st.sidebar.markdown(f'<div class="info-box">Se encontraron {len(series_dict)} series de imágenes</div>', unsafe_allow_html=True)
             
             # Seleccionar serie
-            series_options = [f"{modality} Serie {i+1}: {uid[:8]}... ({len(files['files'])} imágenes)" 
-                            for i, (uid, files) in enumerate(series_dict.items()) 
-                            for modality in [files['modality']]]
+            series_options = [f"{files['modality']} Serie {i+1}: {uid[:8]}... ({len(files['files'])} imágenes)" 
+                            for i, (uid, files) in enumerate(series_dict.items())]
             
             selected_series_option = st.sidebar.selectbox("Seleccionar serie:", series_options)
             selected_idx = series_options.index(selected_series_option)
             selected_series_uid = list(series_dict.keys())[selected_idx]
             
             # Cargar imágenes
-            reader, img = load_image_series(series_dict[selected_series_uid]['files'])
+            reader, img, volume_info = load_image_series(series_dict[selected_series_uid]['files'])
             
             if img is not None:
                 n_slices = img.shape[0]
@@ -272,29 +456,23 @@ if uploaded_file is not None:
                 if struct_files:
                     st.sidebar.markdown(f'<div class="info-box">Archivos de estructuras: {len(struct_files)}</div>', unsafe_allow_html=True)
                     show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
+                    show_names = st.sidebar.checkbox("Mostrar nombres", value=True)
+                    z_tolerance = st.sidebar.slider("Tolerancia de plano (mm)", 0.5, 10.0, 3.0)
                     
                     if show_structures:
                         for struct_file in struct_files:
                             try:
-                                structures = load_structure_file(struct_file)
+                                structures = load_structure_file(struct_file, volume_info)
                                 if structures:
+                                    st.sidebar.success(f"Estructuras cargadas: {len(structures)} ROIs")
+                                    # Mostrar lista de estructuras encontradas
+                                    struct_names = list(structures.keys())
+                                    if len(struct_names) > 0:
+                                        st.sidebar.info(f"Nombres: {', '.join(struct_names[:5])}" + 
+                                                      ("..." if len(struct_names) > 5 else ""))
                                     break  # Usar el primer archivo de estructuras válido
                             except Exception as e:
                                 st.sidebar.warning(f"No se pudo leer estructura: {e}")
-                
-                # Definir función de transformación simple para mapeo
-                def image_to_patient(i, j, k):
-                    # Leer origen y espaciado desde los metadatos si es posible
-                    # Esta es una aproximación simplificada
-                    try:
-                        origin = [0, 0, 0]
-                        spacing = [1, 1, 1]
-                        x = origin[0] + i * spacing[0]
-                        y = origin[1] + j * spacing[1]
-                        z = origin[2] + k * spacing[2]
-                        return (x, y, z)
-                    except:
-                        return (i, j, k)  # Fallback
                 
                 # Ajustes de ventana para visualización
                 if output == 'Imagen':
@@ -355,8 +533,12 @@ if 'img' in locals() and img is not None:
             st.pyplot(fig)
         else:
             # Imagen normal con estructuras si hay
-            if 'structures' in locals() and structures and 'image_to_patient' in locals():
-                fig = plot_with_structures(img, slice_ix, window_width, window_center, structures, image_to_patient)
+            if ('structures' in locals() and structures and 'volume_info' in locals() and 
+                'show_structures' in locals() and show_structures):
+                fig = plot_with_structures(img, slice_ix, window_width, window_center, 
+                                          structures, volume_info, 
+                                          z_tolerance=z_tolerance if 'z_tolerance' in locals() else 3.0,
+                                          show_struct_names='show_names' in locals() and show_names)
             else:
                 fig, ax = plt.subplots(figsize=(12, 10))
                 plt.axis('off')
@@ -389,7 +571,15 @@ if 'img' in locals() and img is not None:
             df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
             st.dataframe(df, height=600)
         except Exception as e:
-            st.error(f"Error al leer metadatos: {str(e)}")
+            # Fallback a PyDICOM para metadatos
+            try:
+                dcm_file = series_dict[selected_series_uid]['files'][slice_ix]
+                dcm = pydicom.dcmread(dcm_file)
+                metadata = {f"{tag.name} ({tag.tag})": str(tag.value) for tag in dcm}
+                df = pd.DataFrame.from_dict(metadata, orient='index', columns=['Valor'])
+                st.dataframe(df, height=600)
+            except Exception as e2:
+                st.error(f"Error al leer metadatos: {str(e2)}")
 else:
     # Página de inicio
     st.markdown('<p class="sub-header">Visualizador de imágenes DICOM</p>', unsafe_allow_html=True)
