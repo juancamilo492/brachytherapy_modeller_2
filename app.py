@@ -9,6 +9,7 @@ import streamlit as st
 import SimpleITK as sitk
 import pydicom
 import matplotlib.patches as patches
+import time
 
 # Configuración de Streamlit
 st.set_page_config(page_title="Brachyanalysis", layout="wide")
@@ -104,14 +105,17 @@ def load_rtstruct(file_path):
             for roi in struct.ROIContourSequence:
                 roi_number = roi.ReferencedROINumber
                 name = roi_names.get(roi_number, f'ROI-{roi_number}')
+                
+                # Extraemos el color si está disponible
+                color = np.array(roi.ROIDisplayColor) / 255.0 if hasattr(roi, 'ROIDisplayColor') else np.random.rand(3)
+                
                 contours = []
-
                 if hasattr(roi, 'ContourSequence'):
                     for contour in roi.ContourSequence:
                         coords = np.array(contour.ContourData).reshape(-1, 3)  # (N, 3)
-                        contours.append(coords)
+                        contours.append({'points': coords, 'z': np.mean(coords[:,2])})
 
-                structures[name] = contours
+                structures[name] = {'color': color, 'contours': contours}
 
         return structures
     except Exception as e:
@@ -128,79 +132,60 @@ def apply_window(image, window_center, window_width):
     img = np.clip((img - min_val) / (max_val - min_val), 0, 1)
     return img
 
-def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False, invert_colors=False):
-    """Dibuja un corte específico en el plano correcto."""
+def patient_to_voxel(points, volume_info):
+    """Convierte puntos de coordenadas paciente a coordenadas de voxel"""
+    spacing = np.array(volume_info['spacing'])
+    origin = np.array(volume_info['origin'])
+    coords = (points - origin) / spacing
+    return coords
+
+def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
+    """Dibuja un corte 2D y superpone contornos"""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Reorganizar según plano - CORREGIDO
     if plane == 'axial':
-        slice_img = image_3d[index, :, :]
+        img = volume[slice_idx,:,:]
     elif plane == 'coronal':
-        # Corregido: tomar una sección frontal del volumen
-        slice_img = image_3d[:, index, :]
+        img = volume[:,slice_idx,:]
     elif plane == 'sagittal':
-        # Corregido: tomar una sección lateral del volumen
-        slice_img = image_3d[:, :, index]
+        img = volume[:,:,slice_idx]
     else:
-        raise ValueError(f"Plano no reconocido: {plane}")
+        raise ValueError("Plano inválido")
 
     # Aplicar ventana
-    img = apply_window(slice_img, window_center, window_width)
-
+    ww, wc = window
+    img = np.clip(img, wc - ww/2, wc + ww/2)
+    img = (img - img.min()) / (img.max() - img.min())
+    
     # Invertir colores si está activado
     if invert_colors:
         img = 1.0 - img
 
-    # Mostrar imagen con orientación correcta
-    if plane == 'axial':
-        ax.imshow(img, cmap='gray', origin='lower')
-    elif plane == 'coronal':
-        # Corregido: reorganizar para visualización correcta
-        ax.imshow(np.rot90(img), cmap='gray')
-    elif plane == 'sagittal':
-        # Corregido: reorganizar para visualización correcta
-        ax.imshow(np.rot90(img), cmap='gray')
+    ax.imshow(img, cmap='gray', origin='lower')
 
-    # Dibujar contornos si corresponde
-    if show_structures and structures:
-        plot_contours(ax, structures, index, volume_info, plane)
+    if structures and show_names:
+        for name, struct in structures.items():
+            for contour in struct['contours']:
+                voxels = patient_to_voxel(contour['points'], volume_info)
+                if plane == 'axial':
+                    mask = np.isclose(voxels[:,2], slice_idx, atol=1)
+                    pts = voxels[mask][:, [1,0]]
+                elif plane == 'coronal':
+                    mask = np.isclose(voxels[:,1], slice_idx, atol=1)
+                    pts = voxels[mask][:, [2,0]]
+                elif plane == 'sagittal':
+                    mask = np.isclose(voxels[:,0], slice_idx, atol=1)
+                    pts = voxels[mask][:, [2,1]]
 
+                if len(pts) >= 3:
+                    polygon = patches.Polygon(pts, closed=True, fill=False, edgecolor=struct['color'], linewidth=linewidth)
+                    ax.add_patch(polygon)
+                    if show_names:
+                        center = np.mean(pts, axis=0)
+                        ax.text(center[0], center[1], name, color=struct['color'], fontsize=8, ha='center', va='center',
+                                bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
     return fig
-
-def plot_contours(ax, structures, index, volume_info, plane):
-    """Dibuja los contornos de las estructuras sobre el ax"""
-    spacing_x, spacing_y, spacing_z = volume_info['spacing']
-    size_slices, size_rows, size_cols = volume_info['size']
-
-    for name, contours in structures.items():
-        for contour in contours:
-            if contour.shape[1] != 3:
-                continue  # saltar contornos inválidos
-
-            xs, ys, zs = contour[:, 0], contour[:, 1], contour[:, 2]
-
-            # Corregido: manejo de coordenadas según plano
-            if plane == 'axial':
-                positions = zs / spacing_z
-                if np.any(np.isclose(positions, index, atol=1)):
-                    x = xs / spacing_x
-                    y = ys / spacing_y
-                    ax.plot(x, y, linewidth=1.5)
-            elif plane == 'sagittal':
-                positions = xs / spacing_x
-                if np.any(np.isclose(positions, index, atol=1)):
-                    # Corregido: mapeo de coordenadas para vista sagital
-                    y = size_rows - ys / spacing_y  # Invertir Y para visualización correcta
-                    z = zs / spacing_z
-                    ax.plot(z, y, linewidth=1.5)
-            elif plane == 'coronal':
-                positions = ys / spacing_y
-                if np.any(np.isclose(positions, index, atol=1)):
-                    # Corregido: mapeo de coordenadas para vista coronal
-                    x = xs / spacing_x
-                    z = zs / spacing_z
-                    ax.plot(z, x, linewidth=1.5)
 
 # --- Parte 4: Interfaz principal ---
 
@@ -218,6 +203,10 @@ if uploaded_file:
         structures = None
         if structure_files:
             structures = load_rtstruct(structure_files[0])
+            if structures:
+                st.success(f"✅ Se cargaron {len(structures)} estructuras.")
+            else:
+                st.warning("⚠️ No se encontraron estructuras RTSTRUCT.")
 
         if image_3d is not None:
             st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
@@ -246,9 +235,9 @@ if uploaded_file:
                     value=unified_idx,
                     step=1
                 )
-                axial_idx = unified_idx if unified_idx <= max_axial else max_axial
-                coronal_idx = unified_idx if unified_idx <= max_coronal else max_coronal
-                sagittal_idx = unified_idx if unified_idx <= max_sagittal else max_sagittal
+                axial_idx = min(unified_idx, max_axial)
+                coronal_idx = min(unified_idx, max_coronal)
+                sagittal_idx = min(unified_idx, max_sagittal)
             else:
                 axial_idx = st.sidebar.slider(
                     "Corte axial (Z)",
@@ -329,36 +318,43 @@ if uploaded_file:
                 window_width = st.sidebar.number_input("Window Width (WW)", value=400)
 
             show_structures = st.sidebar.checkbox("Mostrar estructuras", value=False)
+            linewidth = st.sidebar.slider("Grosor líneas", 1, 8, 2)
 
             col1, col2, col3 = st.columns(3)
 
             with col1:
                 st.markdown("### Axial")
-                fig_axial = plot_slice(
-                    image_3d, volume_info, axial_idx,
-                    plane='axial', structures=structures,
-                    window_center=window_center, window_width=window_width,
-                    show_structures=show_structures, invert_colors=invert_colors
+                fig_axial = draw_slice(
+                    image_3d, axial_idx, 'axial', 
+                    structures if show_structures else None, 
+                    volume_info, 
+                    (window_width, window_center),
+                    linewidth=linewidth,
+                    invert_colors=invert_colors
                 )
                 st.pyplot(fig_axial)
 
             with col2:
                 st.markdown("### Coronal")
-                fig_coronal = plot_slice(
-                    image_3d, volume_info, coronal_idx,
-                    plane='coronal', structures=structures,
-                    window_center=window_center, window_width=window_width,
-                    show_structures=show_structures, invert_colors=invert_colors
+                fig_coronal = draw_slice(
+                    image_3d, coronal_idx, 'coronal',
+                    structures if show_structures else None,
+                    volume_info,
+                    (window_width, window_center),
+                    linewidth=linewidth,
+                    invert_colors=invert_colors
                 )
                 st.pyplot(fig_coronal)
 
             with col3:
                 st.markdown("### Sagital")
-                fig_sagittal = plot_slice(
-                    image_3d, volume_info, sagittal_idx,
-                    plane='sagittal', structures=structures,
-                    window_center=window_center, window_width=window_width,
-                    show_structures=show_structures, invert_colors=invert_colors
+                fig_sagittal = draw_slice(
+                    image_3d, sagittal_idx, 'sagittal',
+                    structures if show_structures else None,
+                    volume_info,
+                    (window_width, window_center),
+                    linewidth=linewidth,
+                    invert_colors=invert_colors
                 )
                 st.pyplot(fig_sagittal)
     else:
