@@ -142,38 +142,29 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     
     # Extraer y reformatear el slice según el plano
     if plane == 'axial':
-        # Plano axial: simplemente tomar el slice z
-        if index >= 0 and index < n_slices:
-            slice_img = image_3d[index, :, :]
-        else:
-            st.error(f"Índice axial fuera de rango: {index}")
-            return fig
-            
+        # Para vista axial, simplemente tomar el slice en esa posición
+        slice_img = image_3d[index, :, :]
+        
     elif plane == 'coronal':
-        # Plano coronal: reconstruir a partir de cada slice axial
-        if index >= 0 and index < n_rows:
-            # Extraer el índice de fila de cada slice axial
-            slice_img = np.zeros((n_slices, n_cols))
-            for z in range(n_slices):
-                slice_img[z, :] = image_3d[z, index, :]
-            # Invertir el eje z para mostrar orientación anatómica correcta
-            slice_img = np.flipud(slice_img)
-        else:
-            st.error(f"Índice coronal fuera de rango: {index}")
-            return fig
+        # Para vista coronal, necesitamos reorganizar los datos
+        # Tomamos un corte a lo largo del eje Y (segunda dimensión)
+        # y mantenemos los ejes X y Z
+        slice_img = np.zeros((n_slices, n_cols))
+        for z in range(n_slices):
+            slice_img[z, :] = image_3d[z, index, :]
+        
+        # Rotamos 90 grados para la orientación correcta (superior arriba)
+        slice_img = np.rot90(slice_img)
             
     elif plane == 'sagittal':
-        # Plano sagital: reconstruir a partir de cada slice axial
-        if index >= 0 and index < n_cols:
-            # Extraer el índice de columna de cada slice axial
-            slice_img = np.zeros((n_slices, n_rows))
-            for z in range(n_slices):
-                slice_img[z, :] = image_3d[z, :, index]
-            # Invertir el eje z para mostrar orientación anatómica correcta
-            slice_img = np.flipud(slice_img)
-        else:
-            st.error(f"Índice sagital fuera de rango: {index}")
-            return fig
+        # Para vista sagital, reorganizamos para tomar un corte a lo largo del eje X
+        # y mantenemos los ejes Y y Z
+        slice_img = np.zeros((n_slices, n_rows))
+        for z in range(n_slices):
+            slice_img[z, :] = image_3d[z, :, index]
+            
+        # Rotamos 90 grados para la orientación correcta (superior arriba)
+        slice_img = np.rot90(slice_img)
     else:
         st.error(f"Plano no reconocido: {plane}")
         return fig
@@ -182,7 +173,7 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     img = apply_window(slice_img, window_center, window_width)
     
     # Mostrar imagen
-    ax.imshow(img, cmap='gray')
+    ax.imshow(img, cmap='gray', interpolation='nearest')
     
     # Dibujar contornos si aplica
     if show_structures and structures:
