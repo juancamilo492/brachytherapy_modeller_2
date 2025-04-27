@@ -230,10 +230,6 @@ if uploaded_file:
         # --- Cargar imágenes ---
         image_3d, volume_info = load_image_series(dicom_files)
         
-        # --- REORGANIZAR el volumen para corregir vistas ---
-        if image_3d is not None:
-            image_3d = np.transpose(image_3d, (2, 1, 0))
-
         # Cargar estructuras si existen
         structures = None
         if structure_files:
@@ -242,6 +238,7 @@ if uploaded_file:
         if image_3d is not None:
             # Sidebar: Configuración
             st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
+            image_3d = np.transpose(image_3d, (2, 1, 0))
 
             max_axial = image_3d.shape[0] - 1
             max_coronal = image_3d.shape[1] - 1
