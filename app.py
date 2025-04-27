@@ -347,5 +347,3 @@ if uploaded_file:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
 
 
-
-the app itsel works, but the coronal and sagital views aren't read properly, they look on the app as if they were codebars
