@@ -402,5 +402,3 @@ if uploaded_file:
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
 
-
-por qué cuando cambio entre cortes, o pongo una ventana, se demora tanto, hay alguna forma de que sea prácticamente inmediato el cambio?
