@@ -137,12 +137,18 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Cortar directamente
+    # Clamp index to valid range based on plane
     if plane == 'axial':
+        max_index = image_3d.shape[2] - 1
+        index = min(max(0, index), max_index)
         slice_img = image_3d[:, :, index]
     elif plane == 'coronal':
+        max_index = image_3d.shape[1] - 1
+        index = min(max(0, index), max_index)
         slice_img = image_3d[:, index, :]
     elif plane == 'sagittal':
+        max_index = image_3d.shape[0] - 1
+        index = min(max(0, index), max_index)
         slice_img = image_3d[index, :, :]
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
@@ -251,13 +257,15 @@ if uploaded_file:
             invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
             
             if sync_slices:
+                # Use the minimum of the max indices to avoid out-of-bounds
+                max_valid_idx = min(max_axial, max_coronal, max_sagittal)
                 unified_idx = st.sidebar.number_input(
-                    "Corte (sincronizado)", min_value=0, max_value=max(max_axial, max_coronal, max_sagittal),
-                    value=max_axial // 2, step=1
+                    "Corte (sincronizado)", min_value=0, max_value=max_valid_idx,
+                    value=max_valid_idx // 2, step=1
                 )
-                axial_idx = unified_idx
-                coronal_idx = unified_idx
-                sagittal_idx = unified_idx
+                axial_idx = min(unified_idx, max_axial)
+                coronal_idx = min(unified_idx, max_coronal)
+                sagittal_idx = min(unified_idx, max_sagittal)
             else:
                 axial_idx = st.sidebar.number_input(
                     "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
@@ -268,7 +276,6 @@ if uploaded_file:
                 sagittal_idx = st.sidebar.number_input(
                     "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
                 )
-
             
             # Opciones de ventana predeterminadas
             window_option = st.sidebar.selectbox(
