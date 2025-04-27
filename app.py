@@ -136,22 +136,39 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Get voxel spacing for aspect ratio correction
+    # Get voxel spacing and size
     spacing_x, spacing_y, spacing_z = volume_info['spacing']
     size_slices, size_rows, size_cols = volume_info['size']
 
-    # Extract the appropriate slice and set aspect ratio
+    # Validate index
+    max_idx = {'axial': size_slices, 'coronal': size_rows, 'sagittal': size_cols}
+    if index >= max_idx[plane]:
+        st.error(f"Index {index} out of bounds for {plane} plane (max: {max_idx[plane] - 1})")
+        return fig
+
+    # Extract slice and set aspect ratio
     if plane == 'axial':
         slice_img = image_3d[index, :, :]  # Shape: (rows, cols) = (Y, X)
-        aspect = spacing_x / spacing_y  # X-spacing / Y-spacing
+        aspect = spacing_x / spacing_y
     elif plane == 'coronal':
         slice_img = image_3d[:, index, :]  # Shape: (slices, cols) = (Z, X)
-        aspect = spacing_x / spacing_z  # X-spacing / Z-spacing
+        aspect = spacing_x / spacing_z
     elif plane == 'sagittal':
         slice_img = image_3d[:, :, index]  # Shape: (slices, rows) = (Z, Y)
-        aspect = spacing_y / spacing_z  # Y-spacing / Z-spacing
+        aspect = spacing_y / spacing_z
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
+
+    # Log slice information
+    st.write(f"{plane} slice at index {index}:")
+    st.write(f"- Shape: {slice_img.shape}")
+    st.write(f"- Aspect ratio: {aspect:.2f}")
+    st.write(f"- Min/Max values: {slice_img.min()}, {slice_img.max()}")
+
+    # Check for valid slice data
+    if slice_img.size == 0 or np.all(slice_img == 0):
+        st.error(f"Invalid slice data for {plane} plane at index {index}")
+        return fig
 
     # Apply windowing
     img = apply_window(slice_img, window_center, window_width)
@@ -160,26 +177,13 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     if invert_colors:
         img = 1.0 - img
 
-    # Display the image with correct aspect ratio
+    # Display with aspect ratio
     ax.imshow(img, cmap='gray', origin='lower', aspect=aspect)
 
     # Draw contours if enabled
     if show_structures and structures:
         plot_contours(ax, structures, index, volume_info, plane)
 
-    return fig
-
-    
-    # Aplicar ventana
-    img = apply_window(slice_img, window_center, window_width)
-    
-    # Mostrar imagen
-    ax.imshow(img, cmap='gray', interpolation='nearest')
-    
-    # Dibujar contornos si aplica
-    if show_structures and structures:
-        plot_contours(ax, structures, index, volume_info, plane)
-    
     return fig
 
 def patient_to_voxel(points, volume_info):
