@@ -133,37 +133,61 @@ def apply_window(image, window_center, window_width):
 
 def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False):
     """Dibuja un corte específico en el plano correcto."""
-
+    
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
-
-    # Reorganizar según plano
+    
+    # Obtener dimensiones del volumen
+    n_slices, n_rows, n_cols = image_3d.shape
+    
+    # Extraer y reformatear el slice según el plano
     if plane == 'axial':
-        slice_img = image_3d[index, :, :]
+        # Plano axial: simplemente tomar el slice z
+        if index >= 0 and index < n_slices:
+            slice_img = image_3d[index, :, :]
+        else:
+            st.error(f"Índice axial fuera de rango: {index}")
+            return fig
+            
     elif plane == 'coronal':
-        # Tomar un corte coronal (mantener ejes x y z)
-        slice_img = image_3d[:, index, :]
+        # Plano coronal: reconstruir a partir de cada slice axial
+        if index >= 0 and index < n_rows:
+            # Extraer el índice de fila de cada slice axial
+            slice_img = np.zeros((n_slices, n_cols))
+            for z in range(n_slices):
+                slice_img[z, :] = image_3d[z, index, :]
+            # Invertir el eje z para mostrar orientación anatómica correcta
+            slice_img = np.flipud(slice_img)
+        else:
+            st.error(f"Índice coronal fuera de rango: {index}")
+            return fig
+            
     elif plane == 'sagittal':
-        # Tomar un corte sagital (mantener ejes y y z)
-        slice_img = image_3d[:, :, index]
+        # Plano sagital: reconstruir a partir de cada slice axial
+        if index >= 0 and index < n_cols:
+            # Extraer el índice de columna de cada slice axial
+            slice_img = np.zeros((n_slices, n_rows))
+            for z in range(n_slices):
+                slice_img[z, :] = image_3d[z, :, index]
+            # Invertir el eje z para mostrar orientación anatómica correcta
+            slice_img = np.flipud(slice_img)
+        else:
+            st.error(f"Índice sagital fuera de rango: {index}")
+            return fig
     else:
-        raise ValueError(f"Plano no reconocido: {plane}")
-
+        st.error(f"Plano no reconocido: {plane}")
+        return fig
+    
     # Aplicar ventana
     img = apply_window(slice_img, window_center, window_width)
-
-    # Para coronal y sagital, necesitamos rotar correctamente
-    if plane in ['coronal', 'sagittal']:
-        # Rotar 90 grados para mostrar la vista correctamente
-        img = np.rot90(img)
-
+    
     # Mostrar imagen
     ax.imshow(img, cmap='gray')
-
+    
     # Dibujar contornos si aplica
     if show_structures and structures:
         plot_contours(ax, structures, index, volume_info, plane)
-
+    
     return fig
 
 
