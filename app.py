@@ -249,28 +249,20 @@ if uploaded_file:
             max_sagittal = image_3d.shape[2] - 1
 
             st.sidebar.markdown("#### Selección de cortes")
+             
+             axial_idx = st.sidebar.number_input(
+                 "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
+             )
+             
+             coronal_idx = st.sidebar.number_input(
+                 "Corte coronal (Y)", min_value=0, max_value=max_coronal, value=max_coronal // 2, step=1
+             )
+             
+             sagittal_idx = st.sidebar.number_input(
+                 "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
+             )
+             
             
-            if sync_slices:
-                unified_idx = st.sidebar.number_input(
-                    "Corte (sincronizado)", min_value=0, max_value=max(max_axial, max_coronal, max_sagittal),
-                    value=max_axial // 2, step=1
-                )
-                axial_idx = unified_idx
-                coronal_idx = unified_idx
-                sagittal_idx = unified_idx
-            else:
-                axial_idx = st.sidebar.number_input(
-                    "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
-                )
-                coronal_idx = st.sidebar.number_input(
-                    "Corte coronal (Y)", min_value=0, max_value=max_coronal, value=max_coronal // 2, step=1
-                )
-                sagittal_idx = st.sidebar.number_input(
-                    "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
-                )
-
-            
-
             # Opciones de ventana predeterminadas
             window_option = st.sidebar.selectbox(
                 "Tipo de ventana", 
