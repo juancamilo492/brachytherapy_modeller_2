@@ -149,7 +149,12 @@ def patient_to_voxel(points, volume_info):
     """Convierte puntos de coordenadas paciente a coordenadas de voxel"""
     spacing = np.array(volume_info['spacing'])
     origin = np.array(volume_info['origin'])
-    coords = (points - origin) / spacing
+    direction = volume_info['direction']
+    
+    # Usar la matriz de dirección para transformar correctamente
+    # Nota: Esto asume que direction es una matriz 3x3
+    coords = np.dot(np.linalg.inv(direction), (points - origin).T).T / spacing
+    
     return coords
 
 def apply_window(img, window_center, window_width):
@@ -166,11 +171,14 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
 
     # Extracción de corte según plano
     if plane == 'axial':
-        img = volume[slice_idx,:,:]
+        mask = np.isclose(voxels[:,2], slice_idx, atol=0.5)  # Aumenta la tolerancia
+        pts = voxels[mask][:, [1,0]]
     elif plane == 'coronal':
-        img = volume[:,slice_idx,:]
+        mask = np.isclose(voxels[:,1], slice_idx, atol=0.5)  # Aumenta la tolerancia
+        pts = voxels[mask][:, [2,0]]
     elif plane == 'sagittal':
-        img = volume[:,:,slice_idx]
+        mask = np.isclose(voxels[:,0], slice_idx, atol=0.5)  # Aumenta la tolerancia
+        pts = voxels[mask][:, [2,1]]
     else:
         raise ValueError("Plano inválido")
 
@@ -358,7 +366,7 @@ if uploaded_file:
                 window_center = st.sidebar.number_input("Window Center (WL)", value=40)
                 window_width = st.sidebar.number_input("Window Width (WW)", value=400)
 
-            show_structures = st.sidebar.checkbox("Mostrar estructuras", value=False)
+            show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
             linewidth = st.sidebar.slider("Grosor líneas", 1, 8, 2)
 
             # Mostrar las imágenes en tres columnas
