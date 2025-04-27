@@ -99,6 +99,10 @@ def load_image_series(file_list):
         origin = getattr(sample, 'ImagePositionPatient', [0, 0, 0])
         direction = getattr(sample, 'ImageOrientationPatient', [1, 0, 0, 0, 1, 0])
 
+        # Convert direction to a list if it's a MultiValue object
+        if isinstance(direction, pydicom.multival.MultiValue):
+            direction = list(direction)
+
         # Ensure spacing values are valid
         spacing = [max(s, 0.1) for s in spacing]  # Avoid zero or negative spacing
 
@@ -127,7 +131,9 @@ def load_image_series(file_list):
             image = sitk.GetImageFromArray(array)
             image.SetSpacing(spacing)
             image.SetOrigin(origin)
-            image.SetDirection(direction + (0, 0, 1))  # Extend direction to 3x3 matrix
+            # Extend direction to 3x3 matrix
+            direction_3x3 = direction + [0, 0, 1]  # Now safe to concatenate
+            image.SetDirection(direction_3x3)
 
             # Resample to isotropic spacing (use the smallest spacing)
             target_spacing = min(spacing)
