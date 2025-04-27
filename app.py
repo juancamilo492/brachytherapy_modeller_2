@@ -262,7 +262,12 @@ if uploaded_file:
             sagittal_idx = st.sidebar.number_input(
                  "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
              )
-             
+
+            
+            st.sidebar.markdown("#### Opciones avanzadas")
+            sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
+            invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
+
              
             
             # Opciones de ventana predeterminadas
