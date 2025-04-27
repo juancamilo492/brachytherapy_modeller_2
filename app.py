@@ -232,17 +232,41 @@ if uploaded_file:
             sagittal_idx = st.sidebar.slider("Corte sagital (X)", 0, max_sagittal, max_sagittal // 2)
 
             # Opciones de ventana predeterminadas
-            window_option = st.sidebar.selectbox("Tipo de ventana", ["Cerebro (Brain)", "Pulmón (Lung)", "Hueso (Bone)"])
+            window_option = st.sidebar.selectbox(
+                "Tipo de ventana", 
+                ["Cerebro (Brain)", "Pulmón (Lung)", "Hueso (Bone)", "Abdomen", "Mediastino (Mediastinum)", 
+                 "Hígado (Liver)", "Tejido blando (Soft Tissue)", "Columna blanda (Spine Soft)", 
+                 "Columna ósea (Spine Bone)", "Aire (Air)", "Grasa (Fat)", "Metal", "Personalizado"]
+            )
 
+            # Asignar valores predeterminados
             if window_option == "Cerebro (Brain)":
-                window_center = 40
-                window_width = 80
+                window_center, window_width = 40, 80
             elif window_option == "Pulmón (Lung)":
-                window_center = -600
-                window_width = 1500
+                window_center, window_width = -600, 1500
             elif window_option == "Hueso (Bone)":
-                window_center = 300
-                window_width = 1500
+                window_center, window_width = 300, 1500
+            elif window_option == "Abdomen":
+                window_center, window_width = 60, 400
+            elif window_option == "Mediastino (Mediastinum)":
+                window_center, window_width = 40, 400
+            elif window_option == "Hígado (Liver)":
+                window_center, window_width = 70, 150
+            elif window_option == "Tejido blando (Soft Tissue)":
+                window_center, window_width = 50, 350
+            elif window_option == "Columna blanda (Spine Soft)":
+                window_center, window_width = 50, 350
+            elif window_option == "Columna ósea (Spine Bone)":
+                window_center, window_width = 300, 1500
+            elif window_option == "Aire (Air)":
+                window_center, window_width = -1000, 2000
+            elif window_option == "Grasa (Fat)":
+                window_center, window_width = -100, 200
+            elif window_option == "Metal":
+                window_center, window_width = 1000, 4000
+            elif window_option == "Personalizado":
+                window_center = st.sidebar.number_input("Window Center (WL)", value=40)
+                window_width = st.sidebar.number_input("Window Width (WW)", value=400)
 
             show_structures = st.sidebar.checkbox("Mostrar estructuras", value=False)
 
