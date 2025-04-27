@@ -6,5 +6,3 @@ SimpleITK
 pillow
 pydicom
 scikit-image
-plotly
-scipy
