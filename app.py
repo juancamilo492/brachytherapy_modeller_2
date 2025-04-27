@@ -131,43 +131,40 @@ def apply_window(image, window_center, window_width):
     img = np.clip((img - min_val) / (max_val - min_val), 0, 1)
     return img
 
-def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False):
+def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False, invert_colors=False):
     """Dibuja un corte específico en el plano correcto."""
-    
+
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
-    
-    # Obtener dimensiones del volumen
-    n_slices, n_rows, n_cols = image_3d.shape
-    
-    # Extraer y reformatear el slice según el plano
+
+    # Reorganizar según plano
     if plane == 'axial':
-        # Para vista axial, simplemente tomar el slice en esa posición
         slice_img = image_3d[index, :, :]
-        
     elif plane == 'coronal':
-        # Para vista coronal, necesitamos reorganizar los datos
-        # Tomamos un corte a lo largo del eje Y (segunda dimensión)
-        # y mantenemos los ejes X y Z
-        slice_img = np.zeros((n_slices, n_cols))
-        for z in range(n_slices):
-            slice_img[z, :] = image_3d[z, index, :]
-        
-        # Rotamos 90 grados para la orientación correcta (superior arriba)
-        slice_img = np.rot90(slice_img)
-            
+        slice_img = image_3d[:, index, :]
+        slice_img = np.flipud(slice_img.T)
     elif plane == 'sagittal':
-        # Para vista sagital, reorganizamos para tomar un corte a lo largo del eje X
-        # y mantenemos los ejes Y y Z
-        slice_img = np.zeros((n_slices, n_rows))
-        for z in range(n_slices):
-            slice_img[z, :] = image_3d[z, :, index]
-            
-        # Rotamos 90 grados para la orientación correcta (superior arriba)
-        slice_img = np.rot90(slice_img)
+        slice_img = image_3d[:, :, index]
+        slice_img = np.flipud(slice_img.T)
     else:
-        st.error(f"Plano no reconocido: {plane}")
-        return fig
+        raise ValueError(f"Plano no reconocido: {plane}")
+
+    # Aplicar ventana
+    img = apply_window(slice_img, window_center, window_width)
+
+    # Invertir colores si está activado
+    if invert_colors:
+        img = 1.0 - img
+
+    # Mostrar imagen
+    ax.imshow(img, cmap='gray', origin='lower')
+
+    # Dibujar contornos si corresponde
+    if show_structures and structures:
+        plot_contours(ax, structures, index, volume_info, plane)
+
+    return fig
+
     
     # Aplicar ventana
     img = apply_window(slice_img, window_center, window_width)
@@ -250,18 +247,26 @@ if uploaded_file:
 
 
             st.sidebar.markdown("#### Selección de cortes")
-             
-            axial_idx = st.sidebar.number_input(
-                 "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
-             )
-             
-            coronal_idx = st.sidebar.number_input(
-                 "Corte coronal (Y)", min_value=0, max_value=max_coronal, value=max_coronal // 2, step=1
-             )
-             
-            sagittal_idx = st.sidebar.number_input(
-                 "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
-             )
+            
+            if sync_slices:
+                unified_idx = st.sidebar.number_input(
+                    "Corte (sincronizado)", min_value=0, max_value=max(max_axial, max_coronal, max_sagittal),
+                    value=max_axial // 2, step=1
+                )
+                axial_idx = unified_idx
+                coronal_idx = unified_idx
+                sagittal_idx = unified_idx
+            else:
+                axial_idx = st.sidebar.number_input(
+                    "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
+                )
+                coronal_idx = st.sidebar.number_input(
+                    "Corte coronal (Y)", min_value=0, max_value=max_coronal, value=max_coronal // 2, step=1
+                )
+                sagittal_idx = st.sidebar.number_input(
+                    "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
+                )
+
 
             
             st.sidebar.markdown("#### Opciones avanzadas")
