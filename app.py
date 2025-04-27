@@ -132,34 +132,35 @@ def apply_window(image, window_center, window_width):
     return img
 
 def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False):
-    """Dibuja un slice específico de la imagen (axial, coronal o sagital)"""
+    """Dibuja un corte específico en el plano correcto."""
 
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Seleccionar el corte según el plano
+    # Reorganizar según plano
     if plane == 'axial':
-        img = image_3d[index, :, :]
+        slice_img = image_3d[index, :, :]
     elif plane == 'coronal':
-        img = image_3d[:, index, :]
-        img = np.transpose(img)  # Muy importante: corregir orientación
+        slice_img = image_3d[:, index, :]
+        slice_img = np.flipud(slice_img.T)  # Primero transponer (X,Z) luego flip vertical
     elif plane == 'sagittal':
-        img = image_3d[:, :, index]
-        img = np.transpose(img)
+        slice_img = image_3d[:, :, index]
+        slice_img = np.flipud(slice_img.T)  # Primero transponer (Y,Z) luego flip vertical
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
     # Aplicar ventana
-    img = apply_window(img, window_center, window_width)
+    img = apply_window(slice_img, window_center, window_width)
 
-    # Mostrar imagen base
+    # Mostrar imagen
     ax.imshow(img, cmap='gray', origin='lower')
 
-    # Mostrar contornos si corresponde
+    # Dibujar contornos si aplica
     if show_structures and structures:
         plot_contours(ax, structures, index, volume_info, plane)
 
     return fig
+
 
 def plot_contours(ax, structures, index, volume_info, plane):
     """Dibuja los contornos de las estructuras sobre el ax"""
