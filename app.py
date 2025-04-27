@@ -141,19 +141,24 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     if plane == 'axial':
         slice_img = image_3d[index, :, :]
     elif plane == 'coronal':
+        # Tomar un corte coronal (mantener ejes x y z)
         slice_img = image_3d[:, index, :]
-        slice_img = np.flipud(slice_img.T)  # Primero transponer (X,Z) luego flip vertical
     elif plane == 'sagittal':
+        # Tomar un corte sagital (mantener ejes y y z)
         slice_img = image_3d[:, :, index]
-        slice_img = np.flipud(slice_img.T)  # Primero transponer (Y,Z) luego flip vertical
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
     # Aplicar ventana
     img = apply_window(slice_img, window_center, window_width)
 
+    # Para coronal y sagital, necesitamos rotar correctamente
+    if plane in ['coronal', 'sagittal']:
+        # Rotar 90 grados para mostrar la vista correctamente
+        img = np.rot90(img)
+
     # Mostrar imagen
-    ax.imshow(img, cmap='gray', origin='lower')
+    ax.imshow(img, cmap='gray')
 
     # Dibujar contornos si aplica
     if show_structures and structures:
