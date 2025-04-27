@@ -120,3 +120,79 @@ def load_rtstruct(file_path):
         st.warning(f"Error leyendo estructura: {e}")
         return None
 
+
+# --- Parte 3: Funciones de visualización ---
+
+def apply_window(image, window_center, window_width):
+    """Aplica ventana de visualización (WW/WL)"""
+    img = image.astype(np.float32)
+    min_val = window_center - window_width / 2
+    max_val = window_center + window_width / 2
+    img = np.clip((img - min_val) / (max_val - min_val), 0, 1)
+    return img
+
+def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False):
+    """Dibuja un slice específico de la imagen (axial, sagital o coronal)"""
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    plt.axis('off')
+
+    # Seleccionar el corte según la vista
+    if plane == 'axial':
+        img = image_3d[index, :, :]
+    elif plane == 'sagittal':
+        img = image_3d[:, :, index]
+    elif plane == 'coronal':
+        img = image_3d[:, index, :]
+    else:
+        raise ValueError(f"Plano no reconocido: {plane}")
+
+    # Aplicar ventana
+    img = apply_window(img, window_center, window_width)
+
+    # Mostrar imagen base
+    ax.imshow(img, cmap='gray', origin='lower')
+
+    # Si se deben mostrar estructuras
+    if show_structures and structures:
+        plot_contours(ax, structures, index, volume_info, plane)
+
+    return fig
+
+def plot_contours(ax, structures, index, volume_info, plane):
+    """Dibuja los contornos de las estructuras sobre el ax"""
+
+    # Espaciado entre píxeles
+    spacing_x, spacing_y, spacing_z = volume_info['spacing']
+    size_slices, size_rows, size_cols = volume_info['size']
+
+    for name, contours in structures.items():
+        for contour in contours:
+            if contour.shape[1] != 3:
+                continue  # saltar contornos inválidos
+
+            # Separar coordenadas
+            xs, ys, zs = contour[:, 0], contour[:, 1], contour[:, 2]
+
+            # Según el plano, seleccionar los puntos que caen en el corte actual
+            if plane == 'axial':
+                # Z es el índice del slice
+                positions = zs / spacing_z
+                if np.any(np.isclose(positions, index, atol=1)):
+                    x = xs / spacing_x
+                    y = ys / spacing_y
+                    ax.plot(x, y, linewidth=1.5)
+            elif plane == 'sagittal':
+                positions = xs / spacing_x
+                if np.any(np.isclose(positions, index, atol=1)):
+                    y = ys / spacing_y
+                    z = zs / spacing_z
+                    ax.plot(y, z, linewidth=1.5)
+            elif plane == 'coronal':
+                positions = ys / spacing_y
+                if np.any(np.isclose(positions, index, atol=1)):
+                    x = xs / spacing_x
+                    z = zs / spacing_z
+                    ax.plot(x, z, linewidth=1.5)
+
+
