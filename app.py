@@ -137,22 +137,20 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Reorganizar según plano
+    # Cortar directamente
     if plane == 'axial':
-        slice_img = image_3d[index, :, :]
+        slice_img = image_3d[:, :, index]
     elif plane == 'coronal':
         slice_img = image_3d[:, index, :]
-        slice_img = np.flipud(slice_img.T)
     elif plane == 'sagittal':
-        slice_img = image_3d[:, :, index]
-        slice_img = np.flipud(slice_img.T)
+        slice_img = image_3d[index, :, :]
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
     # Aplicar ventana
     img = apply_window(slice_img, window_center, window_width)
 
-    # Invertir colores si está activado
+    # Invertir colores
     if invert_colors:
         img = 1.0 - img
 
@@ -229,8 +227,12 @@ if uploaded_file:
         selected_series = st.sidebar.selectbox("Selecciona la serie", series_options)
         dicom_files = series_dict[selected_series]
 
-        # Cargar imágenes
+        # --- Cargar imágenes ---
         image_3d, volume_info = load_image_series(dicom_files)
+        
+        # --- REORGANIZAR el volumen para corregir vistas ---
+        if image_3d is not None:
+            image_3d = np.transpose(image_3d, (2, 1, 0))
 
         # Cargar estructuras si existen
         structures = None
