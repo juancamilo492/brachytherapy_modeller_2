@@ -65,72 +65,85 @@ def find_dicom_series(directory):
 
 # --- Parte 2: Carga de imágenes y estructuras ---
 
-def load_image_series(file_list):
-    """Carga una serie de imágenes DICOM como volumen 3D"""
-    try:
-        reader = sitk.ImageSeriesReader()
-        reader.SetFileNames(file_list)
-        image = reader.Execute()
+def load_dicom_series(file_list):
+    """Carga imágenes DICOM como volumen 3D usando la lógica del código original"""
+    dicom_files = []
+    for file_path in file_list:
+        try:
+            dcm = pydicom.dcmread(file_path, force=True)
+            if hasattr(dcm, 'pixel_array'):
+                dicom_files.append((file_path, dcm))
+        except Exception:
+            continue
 
-        array = sitk.GetArrayFromImage(image)  # (slices, rows, cols)
-        spacing = image.GetSpacing()           # (x, y, z)
-        origin = image.GetOrigin()
-        direction = image.GetDirection()
-
-        volume_info = {
-            'spacing': spacing,
-            'origin': origin,
-            'direction': direction,
-            'size': array.shape
-        }
-        return array, volume_info
-    except Exception as e:
-        st.error(f"Error cargando imágenes DICOM: {e}")
+    if not dicom_files:
         return None, None
 
+    # Ordenar por InstanceNumber
+    dicom_files.sort(key=lambda x: getattr(x[1], 'InstanceNumber', 0))
+    
+    # Encontrar la forma más común
+    shape_counts = {}
+    for _, dcm in dicom_files:
+        shape = dcm.pixel_array.shape
+        shape_counts[shape] = shape_counts.get(shape, 0) + 1
+    
+    best_shape = max(shape_counts, key=shape_counts.get)
+    slices = [d[1].pixel_array for d in dicom_files if d[1].pixel_array.shape == best_shape]
+
+    # Crear volumen 3D
+    volume = np.stack(slices)
+
+    # Extraer información de spacings
+    sample = dicom_files[0][1]
+    spacing = list(getattr(sample, 'PixelSpacing', [1,1])) + [getattr(sample, 'SliceThickness', 1)]
+    origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
+    direction = getattr(sample, 'ImageOrientationPatient', [1,0,0,0,1,0])
+
+    direction_matrix = np.array([
+        [direction[0], direction[3], 0],
+        [direction[1], direction[4], 0],
+        [direction[2], direction[5], 1]
+    ])
+
+    volume_info = {
+        'spacing': spacing,
+        'origin': origin,
+        'direction': direction_matrix,
+        'size': volume.shape
+    }
+    
+    return volume, volume_info
+
 def load_rtstruct(file_path):
-    """Carga un archivo RTSTRUCT y extrae contornos"""
+    """Carga contornos RTSTRUCT usando la lógica del código original"""
     try:
-        struct = pydicom.dcmread(file_path, force=True)
+        struct = pydicom.dcmread(file_path)
         structures = {}
-
+        
+        if not hasattr(struct, 'ROIContourSequence'):
+            return structures
+        
         # Mapeo de ROI Number a ROI Name
-        roi_names = {}
-        if hasattr(struct, 'StructureSetROISequence'):
-            for roi in struct.StructureSetROISequence:
-                roi_names[roi.ROINumber] = roi.ROIName
-
-        # Extraer contornos
-        if hasattr(struct, 'ROIContourSequence'):
-            for roi in struct.ROIContourSequence:
-                roi_number = roi.ReferencedROINumber
-                name = roi_names.get(roi_number, f'ROI-{roi_number}')
-                
-                # Extraemos el color si está disponible
-                color = np.array(roi.ROIDisplayColor) / 255.0 if hasattr(roi, 'ROIDisplayColor') else np.random.rand(3)
-                
-                contours = []
-                if hasattr(roi, 'ContourSequence'):
-                    for contour in roi.ContourSequence:
-                        coords = np.array(contour.ContourData).reshape(-1, 3)  # (N, 3)
-                        contours.append({'points': coords, 'z': np.mean(coords[:,2])})
-
-                structures[name] = {'color': color, 'contours': contours}
-
+        roi_names = {roi.ROINumber: roi.ROIName for roi in struct.StructureSetROISequence}
+        
+        for roi in struct.ROIContourSequence:
+            color = np.array(roi.ROIDisplayColor) / 255.0 if hasattr(roi, 'ROIDisplayColor') else np.random.rand(3)
+            contours = []
+            
+            if hasattr(roi, 'ContourSequence'):
+                for contour in roi.ContourSequence:
+                    pts = np.array(contour.ContourData).reshape(-1, 3)
+                    contours.append({'points': pts, 'z': np.mean(pts[:,2])})
+            
+            structures[roi_names[roi.ReferencedROINumber]] = {'color': color, 'contours': contours}
+        
         return structures
     except Exception as e:
         st.warning(f"Error leyendo estructura: {e}")
         return None
 
 # --- Parte 3: Funciones de visualización ---
-
-def apply_window(image, window_center, window_width):
-    """Aplica ventana de visualización (WW/WL)"""
-    img = image.astype(np.float32)
-    min_val = window_center - window_width / 2
-    max_val = window_center + window_width / 2
-    img = np.clip((img - min_val) / (max_val - min_val), 0, 1)
-    return img
 
 def patient_to_voxel(points, volume_info):
     """Convierte puntos de coordenadas paciente a coordenadas de voxel"""
@@ -139,11 +152,19 @@ def patient_to_voxel(points, volume_info):
     coords = (points - origin) / spacing
     return coords
 
+def apply_window(img, window_center, window_width):
+    """Aplica ventana de visualización (WW/WL)"""
+    ww, wc = window_width, window_center
+    img = np.clip(img, wc - ww/2, wc + ww/2)
+    img = (img - img.min()) / (img.max() - img.min())
+    return img
+
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
-    """Dibuja un corte 2D y superpone contornos"""
+    """Dibuja un corte 2D exactamente como en el código original"""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
+    # Extracción de corte según plano
     if plane == 'axial':
         img = volume[slice_idx,:,:]
     elif plane == 'coronal':
@@ -153,30 +174,31 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
     else:
         raise ValueError("Plano inválido")
 
-    # Aplicar ventana
-    ww, wc = window
-    img = np.clip(img, wc - ww/2, wc + ww/2)
-    img = (img - img.min()) / (img.max() - img.min())
+    # Aplicación de ventana
+    img = apply_window(img, window[1], window[0])
     
-    # Invertir colores si está activado
+    # Invertir colores si se solicita
     if invert_colors:
         img = 1.0 - img
-
+    
+    # Mostrar imagen
     ax.imshow(img, cmap='gray', origin='lower')
 
-    if structures and show_names:
+    # Dibujar contornos si se proporcionan
+    if structures:
         for name, struct in structures.items():
             for contour in struct['contours']:
                 voxels = patient_to_voxel(contour['points'], volume_info)
+                
                 if plane == 'axial':
                     mask = np.isclose(voxels[:,2], slice_idx, atol=1)
-                    pts = voxels[mask][:, [1,0]]
+                    pts = voxels[mask][:, [1,0]]  # Intercambio x,y para visualización correcta
                 elif plane == 'coronal':
                     mask = np.isclose(voxels[:,1], slice_idx, atol=1)
-                    pts = voxels[mask][:, [2,0]]
+                    pts = voxels[mask][:, [2,0]]  # Usar z,x para vista coronal
                 elif plane == 'sagittal':
                     mask = np.isclose(voxels[:,0], slice_idx, atol=1)
-                    pts = voxels[mask][:, [2,1]]
+                    pts = voxels[mask][:, [2,1]]  # Usar z,y para vista sagital
 
                 if len(pts) >= 3:
                     polygon = patches.Polygon(pts, closed=True, fill=False, edgecolor=struct['color'], linewidth=linewidth)
@@ -185,6 +207,7 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                         center = np.mean(pts, axis=0)
                         ax.text(center[0], center[1], name, color=struct['color'], fontsize=8, ha='center', va='center',
                                 bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
+    
     return fig
 
 # --- Parte 4: Interfaz principal ---
@@ -198,7 +221,8 @@ if uploaded_file:
         selected_series = st.sidebar.selectbox("Selecciona la serie", series_options)
         dicom_files = series_dict[selected_series]
 
-        image_3d, volume_info = load_image_series(dicom_files)
+        # Usar la función de carga del código original
+        volume, volume_info = load_dicom_series(dicom_files)
 
         structures = None
         if structure_files:
@@ -208,12 +232,13 @@ if uploaded_file:
             else:
                 st.warning("⚠️ No se encontraron estructuras RTSTRUCT.")
 
-        if image_3d is not None:
+        if volume is not None:
             st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
 
-            max_axial = image_3d.shape[0] - 1
-            max_coronal = image_3d.shape[1] - 1
-            max_sagittal = image_3d.shape[2] - 1
+            # Definir límites de los sliders
+            max_axial = volume.shape[0] - 1
+            max_coronal = volume.shape[1] - 1
+            max_sagittal = volume.shape[2] - 1
 
             st.sidebar.markdown("#### Selección de cortes")
             st.sidebar.markdown("#### Opciones avanzadas")
@@ -289,30 +314,31 @@ if uploaded_file:
                  "Columna ósea (Spine Bone)", "Aire (Air)", "Grasa (Fat)", "Metal", "Personalizado"]
             )
 
+            # Configuración de ventana
             if window_option == "Cerebro (Brain)":
-                window_center, window_width = 40, 80
+                window_width, window_center = 80, 40
             elif window_option == "Pulmón (Lung)":
-                window_center, window_width = -600, 1500
+                window_width, window_center = 1500, -600
             elif window_option == "Hueso (Bone)":
-                window_center, window_width = 300, 1500
+                window_width, window_center = 1500, 300
             elif window_option == "Abdomen":
-                window_center, window_width = 60, 400
+                window_width, window_center = 400, 60
             elif window_option == "Mediastino (Mediastinum)":
-                window_center, window_width = 40, 400
+                window_width, window_center = 400, 40
             elif window_option == "Hígado (Liver)":
-                window_center, window_width = 70, 150
+                window_width, window_center = 150, 70
             elif window_option == "Tejido blando (Soft Tissue)":
-                window_center, window_width = 50, 350
+                window_width, window_center = 350, 50
             elif window_option == "Columna blanda (Spine Soft)":
-                window_center, window_width = 50, 350
+                window_width, window_center = 350, 50
             elif window_option == "Columna ósea (Spine Bone)":
-                window_center, window_width = 300, 1500
+                window_width, window_center = 1500, 300
             elif window_option == "Aire (Air)":
-                window_center, window_width = -1000, 2000
+                window_width, window_center = 2000, -1000
             elif window_option == "Grasa (Fat)":
-                window_center, window_width = -100, 200
+                window_width, window_center = 200, -100
             elif window_option == "Metal":
-                window_center, window_width = 1000, 4000
+                window_width, window_center = 4000, 1000
             elif window_option == "Personalizado":
                 window_center = st.sidebar.number_input("Window Center (WL)", value=40)
                 window_width = st.sidebar.number_input("Window Width (WW)", value=400)
@@ -320,12 +346,13 @@ if uploaded_file:
             show_structures = st.sidebar.checkbox("Mostrar estructuras", value=False)
             linewidth = st.sidebar.slider("Grosor líneas", 1, 8, 2)
 
+            # Mostrar las imágenes en tres columnas
             col1, col2, col3 = st.columns(3)
 
             with col1:
                 st.markdown("### Axial")
                 fig_axial = draw_slice(
-                    image_3d, axial_idx, 'axial', 
+                    volume, axial_idx, 'axial', 
                     structures if show_structures else None, 
                     volume_info, 
                     (window_width, window_center),
@@ -337,7 +364,7 @@ if uploaded_file:
             with col2:
                 st.markdown("### Coronal")
                 fig_coronal = draw_slice(
-                    image_3d, coronal_idx, 'coronal',
+                    volume, coronal_idx, 'coronal',
                     structures if show_structures else None,
                     volume_info,
                     (window_width, window_center),
@@ -349,7 +376,7 @@ if uploaded_file:
             with col3:
                 st.markdown("### Sagital")
                 fig_sagittal = draw_slice(
-                    image_3d, sagittal_idx, 'sagittal',
+                    volume, sagittal_idx, 'sagittal',
                     structures if show_structures else None,
                     volume_info,
                     (window_width, window_center),
