@@ -133,33 +133,37 @@ def apply_window(image, window_center, window_width):
 
 def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False, invert_colors=False):
     """Dibuja un corte específico en el plano correcto."""
-
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Reorganizar según plano
+    # Get voxel spacing for aspect ratio correction
+    spacing_x, spacing_y, spacing_z = volume_info['spacing']
+    size_slices, size_rows, size_cols = volume_info['size']
+
+    # Extract the appropriate slice and set aspect ratio
     if plane == 'axial':
-        slice_img = image_3d[index, :, :]
+        slice_img = image_3d[index, :, :]  # Shape: (rows, cols) = (Y, X)
+        aspect = spacing_x / spacing_y  # X-spacing / Y-spacing
     elif plane == 'coronal':
-        slice_img = image_3d[:, index, :]
-        slice_img = np.flipud(slice_img.T)
+        slice_img = image_3d[:, index, :]  # Shape: (slices, cols) = (Z, X)
+        aspect = spacing_x / spacing_z  # X-spacing / Z-spacing
     elif plane == 'sagittal':
-        slice_img = image_3d[:, :, index]
-        slice_img = np.flipud(slice_img.T)
+        slice_img = image_3d[:, :, index]  # Shape: (slices, rows) = (Z, Y)
+        aspect = spacing_y / spacing_z  # Y-spacing / Z-spacing
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
-    # Aplicar ventana
+    # Apply windowing
     img = apply_window(slice_img, window_center, window_width)
 
-    # Invertir colores si está activado
+    # Invert colors if enabled
     if invert_colors:
         img = 1.0 - img
 
-    # Mostrar imagen
-    ax.imshow(img, cmap='gray', origin='lower')
+    # Display the image with correct aspect ratio
+    ax.imshow(img, cmap='gray', origin='lower', aspect=aspect)
 
-    # Dibujar contornos si corresponde
+    # Draw contours if enabled
     if show_structures and structures:
         plot_contours(ax, structures, index, volume_info, plane)
 
@@ -178,42 +182,44 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     
     return fig
 
+def patient_to_voxel(points, volume_info):
+    """Convierte puntos de coordenadas paciente a coordenadas de voxel."""
+    spacing = np.array(volume_info['spacing'])
+    origin = np.array(volume_info['origin'])
+    coords = (points - origin) / spacing
+    return coords
 
 def plot_contours(ax, structures, index, volume_info, plane):
-    """Dibuja los contornos de las estructuras sobre el ax"""
-
-    # Espaciado entre píxeles
+    """Dibuja los contornos de las estructuras sobre el ax."""
     spacing_x, spacing_y, spacing_z = volume_info['spacing']
     size_slices, size_rows, size_cols = volume_info['size']
 
     for name, contours in structures.items():
         for contour in contours:
             if contour.shape[1] != 3:
-                continue  # saltar contornos inválidos
+                continue  # Skip invalid contours
 
-            # Separar coordenadas
-            xs, ys, zs = contour[:, 0], contour[:, 1], contour[:, 2]
+            # Convert physical coordinates to voxel indices
+            voxels = patient_to_voxel(contour, volume_info)
+            x_pixels, y_pixels, z_pixels = voxels[:, 0], voxels[:, 1], voxels[:, 2]
 
-            # Según el plano, seleccionar los puntos que caen en el corte actual
+            # Select points based on the plane and slice index
             if plane == 'axial':
-                # Z es el índice del slice
-                positions = zs / spacing_z
-                if np.any(np.isclose(positions, index, atol=1)):
-                    x = xs / spacing_x
-                    y = ys / spacing_y
-                    ax.plot(x, y, linewidth=1.5)
-            elif plane == 'sagittal':
-                positions = xs / spacing_x
-                if np.any(np.isclose(positions, index, atol=1)):
-                    y = ys / spacing_y
-                    z = zs / spacing_z
-                    ax.plot(y, z, linewidth=1.5)
+                mask = np.isclose(z_pixels, index, atol=1)
+                pts = voxels[mask][:, [0, 1]]  # (X, Y)
             elif plane == 'coronal':
-                positions = ys / spacing_y
-                if np.any(np.isclose(positions, index, atol=1)):
-                    x = xs / spacing_x
-                    z = zs / spacing_z
-                    ax.plot(x, z, linewidth=1.5)
+                mask = np.isclose(y_pixels, index, atol=1)
+                pts = voxels[mask][:, [0, 2]]  # (X, Z)
+            elif plane == 'sagittal':
+                mask = np.isclose(x_pixels, index, atol=1)
+                pts = voxels[mask][:, [1, 2]]  # (Y, Z)
+            else:
+                continue
+
+            # Draw contour as a polygon if enough points
+            if len(pts) >= 3:
+                polygon = patches.Polygon(pts, closed=True, fill=False, edgecolor='red', linewidth=1.5)
+                ax.add_patch(polygon)
 
 
 # --- Parte 4: Interfaz principal ---
