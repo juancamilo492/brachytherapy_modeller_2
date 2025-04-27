@@ -133,15 +133,15 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Reorganizar según plano
+    # Reorganizar según plano - CORREGIDO
     if plane == 'axial':
         slice_img = image_3d[index, :, :]
     elif plane == 'coronal':
+        # Corregido: tomar una sección frontal del volumen
         slice_img = image_3d[:, index, :]
-        slice_img = np.flipud(slice_img.T)
     elif plane == 'sagittal':
+        # Corregido: tomar una sección lateral del volumen
         slice_img = image_3d[:, :, index]
-        slice_img = np.flipud(slice_img.T)
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
@@ -152,8 +152,15 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     if invert_colors:
         img = 1.0 - img
 
-    # Mostrar imagen
-    ax.imshow(img, cmap='gray', origin='lower')
+    # Mostrar imagen con orientación correcta
+    if plane == 'axial':
+        ax.imshow(img, cmap='gray', origin='lower')
+    elif plane == 'coronal':
+        # Corregido: reorganizar para visualización correcta
+        ax.imshow(np.rot90(img), cmap='gray')
+    elif plane == 'sagittal':
+        # Corregido: reorganizar para visualización correcta
+        ax.imshow(np.rot90(img), cmap='gray')
 
     # Dibujar contornos si corresponde
     if show_structures and structures:
@@ -173,6 +180,7 @@ def plot_contours(ax, structures, index, volume_info, plane):
 
             xs, ys, zs = contour[:, 0], contour[:, 1], contour[:, 2]
 
+            # Corregido: manejo de coordenadas según plano
             if plane == 'axial':
                 positions = zs / spacing_z
                 if np.any(np.isclose(positions, index, atol=1)):
@@ -182,15 +190,17 @@ def plot_contours(ax, structures, index, volume_info, plane):
             elif plane == 'sagittal':
                 positions = xs / spacing_x
                 if np.any(np.isclose(positions, index, atol=1)):
-                    y = ys / spacing_y
+                    # Corregido: mapeo de coordenadas para vista sagital
+                    y = size_rows - ys / spacing_y  # Invertir Y para visualización correcta
                     z = zs / spacing_z
-                    ax.plot(y, z, linewidth=1.5)
+                    ax.plot(z, y, linewidth=1.5)
             elif plane == 'coronal':
                 positions = ys / spacing_y
                 if np.any(np.isclose(positions, index, atol=1)):
+                    # Corregido: mapeo de coordenadas para vista coronal
                     x = xs / spacing_x
                     z = zs / spacing_z
-                    ax.plot(x, z, linewidth=1.5)
+                    ax.plot(z, x, linewidth=1.5)
 
 # --- Parte 4: Interfaz principal ---
 
@@ -236,9 +246,9 @@ if uploaded_file:
                     value=unified_idx,
                     step=1
                 )
-                axial_idx = unified_idx
-                coronal_idx = unified_idx
-                sagittal_idx = unified_idx
+                axial_idx = unified_idx if unified_idx <= max_axial else max_axial
+                coronal_idx = unified_idx if unified_idx <= max_coronal else max_coronal
+                sagittal_idx = unified_idx if unified_idx <= max_sagittal else max_sagittal
             else:
                 axial_idx = st.sidebar.slider(
                     "Corte axial (Z)",
@@ -328,7 +338,7 @@ if uploaded_file:
                     image_3d, volume_info, axial_idx,
                     plane='axial', structures=structures,
                     window_center=window_center, window_width=window_width,
-                    show_structures=show_structures
+                    show_structures=show_structures, invert_colors=invert_colors
                 )
                 st.pyplot(fig_axial)
 
@@ -338,7 +348,7 @@ if uploaded_file:
                     image_3d, volume_info, coronal_idx,
                     plane='coronal', structures=structures,
                     window_center=window_center, window_width=window_width,
-                    show_structures=show_structures
+                    show_structures=show_structures, invert_colors=invert_colors
                 )
                 st.pyplot(fig_coronal)
 
@@ -348,7 +358,7 @@ if uploaded_file:
                     image_3d, volume_info, sagittal_idx,
                     plane='sagittal', structures=structures,
                     window_center=window_center, window_width=window_width,
-                    show_structures=show_structures
+                    show_structures=show_structures, invert_colors=invert_colors
                 )
                 st.pyplot(fig_sagittal)
     else:
