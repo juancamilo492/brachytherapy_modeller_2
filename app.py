@@ -196,3 +196,79 @@ def plot_contours(ax, structures, index, volume_info, plane):
                     ax.plot(x, z, linewidth=1.5)
 
 
+# --- Parte 4: Interfaz principal ---
+
+if uploaded_file:
+    # Extraer y cargar los datos
+    temp_dir = extract_zip(uploaded_file)
+    series_dict, structure_files = find_dicom_series(temp_dir)
+
+    if series_dict:
+        # Selección de serie si hay varias
+        series_options = list(series_dict.keys())
+        selected_series = st.sidebar.selectbox("Selecciona la serie", series_options)
+        dicom_files = series_dict[selected_series]
+
+        # Cargar imágenes
+        image_3d, volume_info = load_image_series(dicom_files)
+
+        # Cargar estructuras si existen
+        structures = None
+        if structure_files:
+            structures = load_rtstruct(structure_files[0])  # solo 1 por ahora
+
+        if image_3d is not None:
+            # Sidebar: Configuración de cortes y ventana
+            st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
+
+            max_axial = image_3d.shape[0] - 1
+            max_coronal = image_3d.shape[1] - 1
+            max_sagittal = image_3d.shape[2] - 1
+
+            axial_idx = st.sidebar.slider("Corte axial (Z)", 0, max_axial, max_axial // 2)
+            coronal_idx = st.sidebar.slider("Corte coronal (Y)", 0, max_coronal, max_coronal // 2)
+            sagittal_idx = st.sidebar.slider("Corte sagital (X)", 0, max_sagittal, max_sagittal // 2)
+
+            window_center = st.sidebar.number_input("Window Center (WL)", value=40)
+            window_width = st.sidebar.number_input("Window Width (WW)", value=400)
+
+            show_structures = st.sidebar.checkbox("Mostrar estructuras", value=False)
+
+            # Mostrar las 3 vistas en la app
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.markdown("### Axial")
+                fig_axial = plot_slice(
+                    image_3d, volume_info, axial_idx,
+                    plane='axial', structures=structures,
+                    window_center=window_center, window_width=window_width,
+                    show_structures=show_structures
+                )
+                st.pyplot(fig_axial)
+
+            with col2:
+                st.markdown("### Coronal")
+                fig_coronal = plot_slice(
+                    image_3d, volume_info, coronal_idx,
+                    plane='coronal', structures=structures,
+                    window_center=window_center, window_width=window_width,
+                    show_structures=show_structures
+                )
+                st.pyplot(fig_coronal)
+
+            with col3:
+                st.markdown("### Sagital")
+                fig_sagittal = plot_slice(
+                    image_3d, volume_info, sagittal_idx,
+                    plane='sagittal', structures=structures,
+                    window_center=window_center, window_width=window_width,
+                    show_structures=show_structures
+                )
+                st.pyplot(fig_sagittal)
+
+    else:
+        st.warning("No se encontraron imágenes DICOM en el ZIP.")
+
+
+
