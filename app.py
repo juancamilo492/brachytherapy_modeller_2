@@ -131,44 +131,43 @@ def apply_window(image, window_center, window_width):
     img = np.clip((img - min_val) / (max_val - min_val), 0, 1)
     return img
 
-def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False, invert_colors=False):
+def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False):
     """Dibuja un corte específico en el plano correcto."""
-
+    
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
-
-    # Clamp index to valid range based on plane
+    
+    # Obtener dimensiones del volumen
+    n_slices, n_rows, n_cols = image_3d.shape
+    
+    # Extraer y reformatear el slice según el plano
     if plane == 'axial':
-        max_index = image_3d.shape[2] - 1
-        index = min(max(0, index), max_index)
-        slice_img = image_3d[:, :, index]
-    elif plane == 'coronal':
-        max_index = image_3d.shape[1] - 1
-        index = min(max(0, index), max_index)
-        slice_img = image_3d[:, index, :]
-    elif plane == 'sagittal':
-        max_index = image_3d.shape[0] - 1
-        index = min(max(0, index), max_index)
+        # Para vista axial, simplemente tomar el slice en esa posición
         slice_img = image_3d[index, :, :]
+        
+    elif plane == 'coronal':
+        # Para vista coronal, necesitamos reorganizar los datos
+        # Tomamos un corte a lo largo del eje Y (segunda dimensión)
+        # y mantenemos los ejes X y Z
+        slice_img = np.zeros((n_slices, n_cols))
+        for z in range(n_slices):
+            slice_img[z, :] = image_3d[z, index, :]
+        
+        # Rotamos 90 grados para la orientación correcta (superior arriba)
+        slice_img = np.rot90(slice_img)
+            
+    elif plane == 'sagittal':
+        # Para vista sagital, reorganizamos para tomar un corte a lo largo del eje X
+        # y mantenemos los ejes Y y Z
+        slice_img = np.zeros((n_slices, n_rows))
+        for z in range(n_slices):
+            slice_img[z, :] = image_3d[z, :, index]
+            
+        # Rotamos 90 grados para la orientación correcta (superior arriba)
+        slice_img = np.rot90(slice_img)
     else:
-        raise ValueError(f"Plano no reconocido: {plane}")
-
-    # Aplicar ventana
-    img = apply_window(slice_img, window_center, window_width)
-
-    # Invertir colores
-    if invert_colors:
-        img = 1.0 - img
-
-    # Mostrar imagen
-    ax.imshow(img, cmap='gray', origin='lower')
-
-    # Dibujar contornos si corresponde
-    if show_structures and structures:
-        plot_contours(ax, structures, index, volume_info, plane)
-
-    return fig
-
+        st.error(f"Plano no reconocido: {plane}")
+        return fig
     
     # Aplicar ventana
     img = apply_window(slice_img, window_center, window_width)
@@ -233,9 +232,9 @@ if uploaded_file:
         selected_series = st.sidebar.selectbox("Selecciona la serie", series_options)
         dicom_files = series_dict[selected_series]
 
-        # --- Cargar imágenes ---
+        # Cargar imágenes
         image_3d, volume_info = load_image_series(dicom_files)
-        
+
         # Cargar estructuras si existen
         structures = None
         if structure_files:
@@ -244,7 +243,6 @@ if uploaded_file:
         if image_3d is not None:
             # Sidebar: Configuración
             st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
-            image_3d = np.transpose(image_3d, (2, 1, 0))
 
             max_axial = image_3d.shape[0] - 1
             max_coronal = image_3d.shape[1] - 1
@@ -252,30 +250,25 @@ if uploaded_file:
 
 
             st.sidebar.markdown("#### Selección de cortes")
+             
+            axial_idx = st.sidebar.number_input(
+                 "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
+             )
+             
+            coronal_idx = st.sidebar.number_input(
+                 "Corte coronal (Y)", min_value=0, max_value=max_coronal, value=max_coronal // 2, step=1
+             )
+             
+            sagittal_idx = st.sidebar.number_input(
+                 "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
+             )
+
+            
             st.sidebar.markdown("#### Opciones avanzadas")
             sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
             invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
-            
-            if sync_slices:
-                # Use the minimum of the max indices to avoid out-of-bounds
-                max_valid_idx = min(max_axial, max_coronal, max_sagittal)
-                unified_idx = st.sidebar.number_input(
-                    "Corte (sincronizado)", min_value=0, max_value=max_valid_idx,
-                    value=max_valid_idx // 2, step=1
-                )
-                axial_idx = min(unified_idx, max_axial)
-                coronal_idx = min(unified_idx, max_coronal)
-                sagittal_idx = min(unified_idx, max_sagittal)
-            else:
-                axial_idx = st.sidebar.number_input(
-                    "Corte axial (Z)", min_value=0, max_value=max_axial, value=max_axial // 2, step=1
-                )
-                coronal_idx = st.sidebar.number_input(
-                    "Corte coronal (Y)", min_value=0, max_value=max_coronal, value=max_coronal // 2, step=1
-                )
-                sagittal_idx = st.sidebar.number_input(
-                    "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
-                )
+
+             
             
             # Opciones de ventana predeterminadas
             window_option = st.sidebar.selectbox(
@@ -351,6 +344,5 @@ if uploaded_file:
 
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
-
 
 
