@@ -140,10 +140,10 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     # Seleccionar el corte según la vista
     if plane == 'axial':
         img = image_3d[index, :, :]
-    elif plane == 'sagittal':
-        img = image_3d[:, :, index]
     elif plane == 'coronal':
-        img = image_3d[:, index, :]
+        img = np.flipud(np.rot90(image_3d[:, index, :]))
+    elif plane == 'sagittal':
+        img = np.flipud(np.rot90(image_3d[:, :, index]))
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
@@ -153,7 +153,7 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     # Mostrar imagen base
     ax.imshow(img, cmap='gray', origin='lower')
 
-    # Si se deben mostrar estructuras
+    # Mostrar estructuras si están activadas
     if show_structures and structures:
         plot_contours(ax, structures, index, volume_info, plane)
 
@@ -215,10 +215,10 @@ if uploaded_file:
         # Cargar estructuras si existen
         structures = None
         if structure_files:
-            structures = load_rtstruct(structure_files[0])  # solo 1 por ahora
+            structures = load_rtstruct(structure_files[0])
 
         if image_3d is not None:
-            # Sidebar: Configuración de cortes y ventana
+            # Sidebar: Configuración
             st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
 
             max_axial = image_3d.shape[0] - 1
@@ -229,12 +229,22 @@ if uploaded_file:
             coronal_idx = st.sidebar.slider("Corte coronal (Y)", 0, max_coronal, max_coronal // 2)
             sagittal_idx = st.sidebar.slider("Corte sagital (X)", 0, max_sagittal, max_sagittal // 2)
 
-            window_center = st.sidebar.number_input("Window Center (WL)", value=40)
-            window_width = st.sidebar.number_input("Window Width (WW)", value=400)
+            # Opciones de ventana predeterminadas
+            window_option = st.sidebar.selectbox("Tipo de ventana", ["Cerebro (Brain)", "Pulmón (Lung)", "Hueso (Bone)"])
+
+            if window_option == "Cerebro (Brain)":
+                window_center = 40
+                window_width = 80
+            elif window_option == "Pulmón (Lung)":
+                window_center = -600
+                window_width = 1500
+            elif window_option == "Hueso (Bone)":
+                window_center = 300
+                window_width = 1500
 
             show_structures = st.sidebar.checkbox("Mostrar estructuras", value=False)
 
-            # Mostrar las 3 vistas en la app
+            # Mostrar vistas
             col1, col2, col3 = st.columns(3)
 
             with col1:
