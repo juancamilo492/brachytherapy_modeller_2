@@ -132,18 +132,20 @@ def apply_window(image, window_center, window_width):
     return img
 
 def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False):
-    """Dibuja un slice específico de la imagen (axial, sagital o coronal)"""
+    """Dibuja un slice específico de la imagen (axial, coronal o sagital)"""
 
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Seleccionar el corte según la vista
+    # Seleccionar el corte según el plano
     if plane == 'axial':
         img = image_3d[index, :, :]
     elif plane == 'coronal':
-        img = np.flipud(np.rot90(image_3d[:, index, :]))
+        img = image_3d[:, index, :]
+        img = np.transpose(img)  # Muy importante: corregir orientación
     elif plane == 'sagittal':
-        img = np.flipud(np.rot90(image_3d[:, :, index]))
+        img = image_3d[:, :, index]
+        img = np.transpose(img)
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
@@ -153,7 +155,7 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     # Mostrar imagen base
     ax.imshow(img, cmap='gray', origin='lower')
 
-    # Mostrar estructuras si están activadas
+    # Mostrar contornos si corresponde
     if show_structures and structures:
         plot_contours(ax, structures, index, volume_info, plane)
 
