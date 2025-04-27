@@ -247,6 +247,9 @@ if uploaded_file:
 
 
             st.sidebar.markdown("#### Selección de cortes")
+            st.sidebar.markdown("#### Opciones avanzadas")
+            sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
+            invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
             
             if sync_slices:
                 unified_idx = st.sidebar.number_input(
@@ -267,13 +270,6 @@ if uploaded_file:
                     "Corte sagital (X)", min_value=0, max_value=max_sagittal, value=max_sagittal // 2, step=1
                 )
 
-
-            
-            st.sidebar.markdown("#### Opciones avanzadas")
-            sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
-            invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
-
-             
             
             # Opciones de ventana predeterminadas
             window_option = st.sidebar.selectbox(
