@@ -1,2 +1,6 @@
 [server]
 maxUploadSize = 700
+[runner]
+magicEnabled = false
+[cache]
+maxEntrySize = 1000000000  # Aumentar límite de caché
