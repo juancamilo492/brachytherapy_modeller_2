@@ -131,7 +131,7 @@ def apply_window(image, window_center, window_width):
     img = np.clip((img - min_val) / (max_val - min_val), 0, 1)
     return img
 
-def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False, invert_colors=False):
+def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, window_center=40, window_width=400, show_structures=False, invert_colors=False, debug_raw=False):
     """Dibuja un corte específico en el plano correcto."""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
@@ -152,10 +152,12 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
         aspect = spacing_x / spacing_y
     elif plane == 'coronal':
         slice_img = image_3d[:, index, :]  # Shape: (slices, cols) = (Z, X)
-        aspect = spacing_x / spacing_z
+        slice_img = slice_img.T  # Transpose to (X, Z)
+        aspect = spacing_z / spacing_x  # After transpose: X (horizontal), Z (vertical)
     elif plane == 'sagittal':
         slice_img = image_3d[:, :, index]  # Shape: (slices, rows) = (Z, Y)
-        aspect = spacing_y / spacing_z
+        slice_img = slice_img.T  # Transpose to (Y, Z)
+        aspect = spacing_z / spacing_y  # After transpose: Y (horizontal), Z (vertical)
     else:
         raise ValueError(f"Plano no reconocido: {plane}")
 
@@ -168,6 +170,11 @@ def plot_slice(image_3d, volume_info, index, plane='axial', structures=None, win
     # Check for valid slice data
     if slice_img.size == 0 or np.all(slice_img == 0):
         st.error(f"Invalid slice data for {plane} plane at index {index}")
+        return fig
+
+    if debug_raw:
+        ax.imshow(slice_img, cmap='gray', origin='lower')
+        st.write(f"Debug: Raw {plane} slice at index {index}, shape: {slice_img.shape}")
         return fig
 
     # Apply windowing
