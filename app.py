@@ -215,10 +215,10 @@ def apply_window(img, window_center, window_width):
     return img
 
 
-def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=False, invert_colors=False):
+def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
     """
-    Versión mejorada de la función para dibujar contornos en todos los planos
-    con una lógica consistente y sin mostrar nombres de estructuras
+    Versión completamente revisada de la función para dibujar contornos con mejoras
+    para resolver problemas en la vista axial
     """
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
@@ -261,10 +261,20 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
             current_slice_pos = volume_info['slice_positions'][slice_idx]
         else:
             current_slice_pos = origin[2] + slice_idx * spacing[2]
+        
+        # Debug: mostrar la posición del slice
+        ax.text(5, 30, f"Z: {current_slice_pos:.2f} mm", color='yellow', 
+                bbox=dict(facecolor='black', alpha=0.5))
+    
     elif plane == 'coronal':
         current_slice_pos = origin[1] + slice_idx * spacing[1]
+        ax.text(5, 30, f"Y: {current_slice_pos:.2f} mm", color='yellow', 
+                bbox=dict(facecolor='black', alpha=0.5))
+    
     elif plane == 'sagittal':
         current_slice_pos = origin[0] + slice_idx * spacing[0]
+        ax.text(5, 30, f"X: {current_slice_pos:.2f} mm", color='yellow', 
+                bbox=dict(facecolor='black', alpha=0.5))
     
     # Dibujar contornos para cada estructura
     for name, struct in structures.items():
@@ -274,6 +284,7 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
         for contour in struct['contours']:
             raw_points = contour['points']  # Puntos en coordenadas físicas (mm)
             
+            # ENFOQUE COMPLETAMENTE NUEVO PARA AXIAL:
             if plane == 'axial':
                 # Verificar si este contorno pertenece aproximadamente a este slice
                 contour_z_values = raw_points[:, 2]  # Todas las coordenadas Z de este contorno
@@ -301,23 +312,16 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                         ax.add_patch(polygon)
                         contour_drawn += 1
             
+            # PLANES CORONAL Y SAGITAL (mantener la lógica anterior que funciona bien)
             elif plane == 'coronal':
-                # Aplicar el mismo enfoque que para axial, pero para coronal
-                contour_y_values = raw_points[:, 1]  # Todas las coordenadas Y de este contorno
-                min_y = np.min(contour_y_values)
-                max_y = np.max(contour_y_values)
-                
-                tolerance = spacing[1] * 2.0  # Tolerancia aumentada
-                
-                if (min_y - tolerance <= current_slice_pos <= max_y + tolerance):
+                # Coordenada Y cerca del slice actual
+                mask = np.abs(raw_points[:, 1] - current_slice_pos) < spacing[1]
+                if np.any(mask):
+                    # Convertir solo puntos relevantes
+                    pixel_points = np.zeros((np.sum(mask), 2))
+                    pixel_points[:, 0] = (raw_points[mask, 0] - origin[0]) / spacing[0]  # X
+                    pixel_points[:, 1] = (raw_points[mask, 2] - origin[2]) / spacing[2]  # Z
                     
-                    # Convertir de coordenadas físicas a coordenadas de píxel
-                    # Para la vista coronal, necesitamos las coordenadas X y Z
-                    pixel_points = np.zeros((raw_points.shape[0], 2))
-                    pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]  # X
-                    pixel_points[:, 1] = (raw_points[:, 2] - origin[2]) / spacing[2]  # Z
-                    
-                    # Dibujar el polígono si tenemos suficientes puntos
                     if len(pixel_points) >= 3:
                         polygon = patches.Polygon(pixel_points, closed=True, 
                                                 fill=False, edgecolor=color, 
@@ -326,28 +330,26 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                         contour_drawn += 1
             
             elif plane == 'sagittal':
-                # Aplicar el mismo enfoque que para axial, pero para sagital
-                contour_x_values = raw_points[:, 0]  # Todas las coordenadas X de este contorno
-                min_x = np.min(contour_x_values)
-                max_x = np.max(contour_x_values)
-                
-                tolerance = spacing[0] * 2.0  # Tolerancia aumentada
-                
-                if (min_x - tolerance <= current_slice_pos <= max_x + tolerance):
+                # Coordenada X cerca del slice actual
+                mask = np.abs(raw_points[:, 0] - current_slice_pos) < spacing[0]
+                if np.any(mask):
+                    # Convertir solo puntos relevantes
+                    pixel_points = np.zeros((np.sum(mask), 2))
+                    pixel_points[:, 0] = (raw_points[mask, 1] - origin[1]) / spacing[1]  # Y
+                    pixel_points[:, 1] = (raw_points[mask, 2] - origin[2]) / spacing[2]  # Z
                     
-                    # Convertir de coordenadas físicas a coordenadas de píxel
-                    # Para la vista sagital, necesitamos las coordenadas Y y Z
-                    pixel_points = np.zeros((raw_points.shape[0], 2))
-                    pixel_points[:, 0] = (raw_points[:, 1] - origin[1]) / spacing[1]  # Y
-                    pixel_points[:, 1] = (raw_points[:, 2] - origin[2]) / spacing[2]  # Z
-                    
-                    # Dibujar el polígono si tenemos suficientes puntos
                     if len(pixel_points) >= 3:
                         polygon = patches.Polygon(pixel_points, closed=True, 
                                                 fill=False, edgecolor=color, 
                                                 linewidth=linewidth)
                         ax.add_patch(polygon)
                         contour_drawn += 1
+        
+        # Mostrar nombre de la estructura si se dibujó algún contorno
+        if contour_drawn > 0 and show_names:
+            ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", 
+                   color=color, fontsize=8, ha='center', va='center', 
+                   bbox=dict(facecolor='white', alpha=0.7))
     
     plt.tight_layout()
     return fig
