@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import pydicom
 import matplotlib.patches as patches
+from pydicom.valuerep import DSfloat
 
 # Configuración de Streamlit
 st.set_page_config(page_title="Brachyanalysis", layout="wide")
@@ -368,12 +369,22 @@ if uploaded_file:
             if window_option == "Default":
                 sample = dicom_files[0]
                 dcm = pydicom.dcmread(sample, force=True)
-                window_width = getattr(dcm, 'WindowWidth', [400])[0] if hasattr(dcm, 'WindowWidth') else 400
-                window_center = getattr(dcm, 'WindowCenter', [40])[0] if hasattr(dcm, 'WindowCenter') else 40
+                # Manejar WindowWidth y WindowCenter correctamente
+                window_width = getattr(dcm, 'WindowWidth', 400)
+                window_center = getattr(dcm, 'WindowCenter', 40)
+                # Convertir DSfloat o listas a valores numéricos
                 if isinstance(window_width, (list, tuple)):
-                    window_width = window_width[0]
+                    window_width = float(window_width[0])
+                elif isinstance(window_width, DSfloat):
+                    window_width = float(window_width)
+                else:
+                    window_width = float(window_width)
                 if isinstance(window_center, (list, tuple)):
-                    window_center = window_center[0]
+                    window_center = float(window_center[0])
+                elif isinstance(window_center, DSfloat):
+                    window_center = float(window_center)
+                else:
+                    window_center = float(window_center)
             elif window_option == "Cerebro (Brain)":
                 window_width, window_center = 80, 40
             elif window_option == "Pulmón (Lung)":
