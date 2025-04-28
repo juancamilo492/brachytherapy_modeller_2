@@ -259,11 +259,11 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                 
                 # Extraer coordenadas según el plano
                 if plane == 'axial':
-                    # Para vista axial, necesitamos puntos con z cercana al slice actual
+                    # Para vista axial (z constante) - usando enfoque similar a los otros planos
                     slice_pos = slice_idx * spacing[2] + origin[2]
-                    if abs(contour['z'] - slice_pos) < spacing[2]:
-                        # Extraer solo coordenadas x,y para este plano
-                        pts = points[:, [0, 1]]
+                    mask = np.abs(raw_points[:, 2] - slice_pos) < spacing[2] * 1.5  # Tolerancia aumentada
+                    if np.any(mask):
+                        pts = points[mask][:, [0, 1]]
                         if len(pts) >= 3:
                             polygon = patches.Polygon(pts, closed=True, fill=False, 
                                                     edgecolor=struct['color'], linewidth=linewidth)
@@ -307,7 +307,6 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
 
     plt.tight_layout()
     return fig
-
 
 # --- Parte 4: Interfaz principal ---
 
