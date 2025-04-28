@@ -438,19 +438,7 @@ if uploaded_file:
 
 
             if window_option == "Default":
-                # Obtener valores de ventana de la imagen DICOM
-                sample = dicom_files[0]
-                try:
-                    dcm = pydicom.dcmread(sample, force=True)
-                    window_width = getattr(dcm, 'WindowWidth', [400])[0] if hasattr(dcm, 'WindowWidth') else 400
-                    window_center = getattr(dcm, 'WindowCenter', [40])[0] if hasattr(dcm, 'WindowCenter') else 40
-                    # Asegurar que los valores son números, ya que pueden ser múltiples o estar en formato especial
-                    if isinstance(window_width, (list, tuple)):
-                        window_width = window_width[0]
-                    if isinstance(window_center, (list, tuple)):
-                        window_center = window_center[0]
-                except Exception:
-                    window_width, window_center = 400, 40  # Valores por defecto si hay algún error
+                window_width, window_center = 400, 40  # Valores por defecto si hay algún error
             # Configuración de ventana
             elif window_option == "Cerebro (Brain)":
                 window_width, window_center = 80, 40
