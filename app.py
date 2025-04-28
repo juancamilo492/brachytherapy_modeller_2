@@ -160,58 +160,62 @@ def apply_window(img, window_center, window_width):
     return img
 
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
-    """Dibuja un corte 2D con contornos correctamente alineados"""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Extracción de corte según plano
+    # Obtener la imagen del corte
     if plane == 'axial':
-        img = volume[slice_idx,:,:]
+        img = volume[slice_idx, :, :]
     elif plane == 'coronal':
-        img = volume[:,slice_idx,:]
+        img = volume[:, slice_idx, :]
     elif plane == 'sagittal':
-        img = volume[:,:,slice_idx]
+        img = volume[:, :, slice_idx]
     else:
         raise ValueError("Plano inválido")
 
     # Aplicar ventana
     img = apply_window(img, window[1], window[0])
-
     if invert_colors:
         img = 1.0 - img
 
     # Mostrar imagen
     ax.imshow(img, cmap='gray', origin='lower')
 
-    # Dibujar contornos si hay estructuras
+    # Dibujar contornos
     if structures:
         for name, struct in structures.items():
+            all_pts = []  # para calcular centro global después
             for contour in struct['contours']:
                 voxels = patient_to_voxel(contour['points'], volume_info)
 
                 if plane == 'axial':
-                    mask = np.isclose(voxels[:,2], slice_idx, atol=0.5)
-                    pts = voxels[mask][:, [0,1]]  # (X,Y)
+                    mask = np.isclose(voxels[:, 2], slice_idx, atol=0.5)
+                    pts = voxels[mask][:, [0,1]]
                 elif plane == 'coronal':
-                    mask = np.isclose(voxels[:,1], slice_idx, atol=0.5)
-                    pts = voxels[mask][:, [0,2]]  # (X,Z)
+                    mask = np.isclose(voxels[:, 1], slice_idx, atol=0.5)
+                    pts = voxels[mask][:, [0,2]]
                 elif plane == 'sagittal':
-                    mask = np.isclose(voxels[:,0], slice_idx, atol=0.5)
-                    pts = voxels[mask][:, [1,2]]  # (Y,Z)
+                    mask = np.isclose(voxels[:, 0], slice_idx, atol=0.5)
+                    pts = voxels[mask][:, [1,2]]
 
                 if len(pts) >= 3:
                     polygon = patches.Polygon(pts, closed=True, fill=False, edgecolor=struct['color'], linewidth=linewidth)
                     ax.add_patch(polygon)
-                    if show_names:
-                        center = np.mean(pts, axis=0)
-                        ax.text(center[0], center[1], name, color=struct['color'], fontsize=8, ha='center', va='center',
-                                bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+                    all_pts.append(pts)
 
-    # Ajustar límites para que la imagen y los contornos coincidan
+            # Dibujar nombre una vez por estructura
+            if show_names and all_pts:
+                all_pts_concat = np.vstack(all_pts)
+                center = np.mean(all_pts_concat, axis=0)
+                ax.text(center[0], center[1], name, color=struct['color'], fontsize=8,
+                        ha='center', va='center', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+
+    # Ajustar límites para coincidir
     ax.set_xlim(0, img.shape[1])
     ax.set_ylim(0, img.shape[0])
 
     return fig
+
 
 
 # --- Parte 4: Interfaz principal ---
