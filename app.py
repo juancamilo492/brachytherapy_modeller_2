@@ -146,18 +146,28 @@ def load_rtstruct(file_path):
 # --- Parte 3: Funciones de visualización ---
 
 def patient_to_voxel(points, volume_info):
-    """Convierte puntos de coordenadas paciente a coordenadas de voxel"""
-    spacing = np.array(volume_info['spacing'])
-    origin = np.array(volume_info['origin'])
-    coords = (points - origin) / spacing
-    return coords
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"Se esperaba (N, 3) puntos, recibido {points.shape}")
+
+    origin = np.asarray(volume_info['origin'], dtype=np.float32)
+    spacing = np.asarray(volume_info['spacing'], dtype=np.float32)
+
+    voxels = (points - origin) / spacing
+    return voxels
+
 
 def apply_window(img, window_center, window_width):
-    """Aplica ventana de visualización (WW/WL)"""
-    ww, wc = window_width, window_center
-    img = np.clip(img, wc - ww/2, wc + ww/2)
-    img = (img - img.min()) / (img.max() - img.min())
+    img = img.astype(np.float32)
+
+    min_value = window_center - window_width / 2
+    max_value = window_center + window_width / 2
+
+    img = np.clip(img, min_value, max_value)  # Recortar intensidades
+    img = (img - min_value) / (max_value - min_value)  # Normalizar 0-1
+    img = np.clip(img, 0, 1)  # Garantizar dentro [0,1]
+
     return img
+
 
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -171,49 +181,54 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
     elif plane == 'sagittal':
         img = volume[:, :, slice_idx]
     else:
-        raise ValueError("Plano inválido")
+        raise ValueError("Plano inválido: debe ser 'axial', 'coronal' o 'sagittal'")
 
     # Aplicar ventana
     img = apply_window(img, window[1], window[0])
     if invert_colors:
         img = 1.0 - img
 
-    # Mostrar imagen
+    # Mostrar imagen base
     ax.imshow(img, cmap='gray', origin='lower')
 
     # Dibujar contornos
     if structures:
         for name, struct in structures.items():
-            all_pts = []  # para calcular centro global después
+            all_pts = []  # Para calcular centro de la estructura
+
             for contour in struct['contours']:
                 voxels = patient_to_voxel(contour['points'], volume_info)
 
+                # Para cada plano, escoger los dos ejes que se dibujan, y filtrar por el eje perpendicular
                 if plane == 'axial':
-                    mask = np.isclose(voxels[:, 2], slice_idx, atol=0.5)
-                    pts = voxels[mask][:, [0,1]]
+                    coords = voxels[:, [0, 1]]  # (x, y)
+                    mask = np.abs(voxels[:, 2] - slice_idx) < 0.5
                 elif plane == 'coronal':
-                    mask = np.isclose(voxels[:, 1], slice_idx, atol=0.5)
-                    pts = voxels[mask][:, [0,2]]
+                    coords = voxels[:, [0, 2]]  # (x, z)
+                    mask = np.abs(voxels[:, 1] - slice_idx) < 0.5
                 elif plane == 'sagittal':
-                    mask = np.isclose(voxels[:, 0], slice_idx, atol=0.5)
-                    pts = voxels[mask][:, [1,2]]
+                    coords = voxels[:, [1, 2]]  # (y, z)
+                    mask = np.abs(voxels[:, 0] - slice_idx) < 0.5
+
+                pts = coords[mask]
 
                 if len(pts) >= 3:
                     polygon = patches.Polygon(pts, closed=True, fill=False, edgecolor=struct['color'], linewidth=linewidth)
                     ax.add_patch(polygon)
                     all_pts.append(pts)
 
-            # Dibujar nombre una vez por estructura
+            # Dibujar nombre de la estructura una vez, en el centro del conjunto de puntos
             if show_names and all_pts:
                 all_pts_concat = np.vstack(all_pts)
                 center = np.mean(all_pts_concat, axis=0)
                 ax.text(center[0], center[1], name, color=struct['color'], fontsize=8,
                         ha='center', va='center', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
 
-    # Ajustar límites para coincidir
+    # Ajustar límites para coincidir bien
     ax.set_xlim(0, img.shape[1])
     ax.set_ylim(0, img.shape[0])
 
+    plt.tight_layout()
     return fig
 
 
