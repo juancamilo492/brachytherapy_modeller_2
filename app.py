@@ -135,93 +135,70 @@ def load_dicom_series(file_list):
     return volume, volume_info
 
 def load_rtstruct(file_path):
-    """Improved function to load contours from RTSTRUCT file"""
+    """Carga contornos RTSTRUCT con mejor manejo de errores y debug"""
     try:
         struct = pydicom.dcmread(file_path)
         structures = {}
         
         if not hasattr(struct, 'ROIContourSequence'):
-            st.warning("The RTSTRUCT file doesn't contain a ROIContour sequence")
+            st.warning("El archivo RTSTRUCT no contiene secuencia ROIContour")
             return structures
         
-        # Map ROI Number to ROI Name
-        roi_names = {}
-        if hasattr(struct, 'StructureSetROISequence'):
-            for roi in struct.StructureSetROISequence:
-                if hasattr(roi, 'ROINumber') and hasattr(roi, 'ROIName'):
-                    roi_names[roi.ROINumber] = roi.ROIName
+        # Mapeo de ROI Number a ROI Name
+        roi_names = {roi.ROINumber: roi.ROIName for roi in struct.StructureSetROISequence}
         
         # Debug info
-        roi_list = list(roi_names.values())
-        if roi_list:
-            st.info(f"Found structures: {', '.join(roi_list)}")
+        st.info(f"Estructuras encontradas: {', '.join(roi_names.values())}")
         
-        # Process each ROI in the contour sequence
         for roi in struct.ROIContourSequence:
-            # Default color if not specified
-            if hasattr(roi, 'ROIDisplayColor'):
-                color = np.array(roi.ROIDisplayColor) / 255.0
-            else:
-                color = np.random.rand(3)  # Random color
-                
+            color = np.array(roi.ROIDisplayColor) / 255.0 if hasattr(roi, 'ROIDisplayColor') else np.random.rand(3)
             contours = []
             
             if hasattr(roi, 'ContourSequence'):
                 contour_count = 0
-                
                 for contour in roi.ContourSequence:
-                    # Only process contours that have contour data
-                    if hasattr(contour, 'ContourData') and contour.ContourData:
-                        # Make sure we have the right number of points
-                        num_points = len(contour.ContourData) // 3
-                        if num_points * 3 == len(contour.ContourData):
-                            pts = np.array(contour.ContourData).reshape(num_points, 3)
-                            contours.append({
-                                'points': pts,
-                                'z': np.mean(pts[:, 2])  # Average z position
-                            })
-                            contour_count += 1
+                    pts = np.array(contour.ContourData).reshape(-1, 3)
+                    contours.append({'points': pts, 'z': np.mean(pts[:,2])})
+                    contour_count += 1
                 
-                # Use ROI name if available, otherwise use ROI number
-                if hasattr(roi, 'ReferencedROINumber'):
-                    roi_num = roi.ReferencedROINumber
-                    roi_name = roi_names.get(roi_num, f"ROI-{roi_num}")
-                    
-                    structures[roi_name] = {
-                        'color': color,
-                        'contours': contours
-                    }
-                    
-                    # Provide info about loaded contours
-                    if contour_count > 0:
-                        st.info(f"Loaded {contour_count} contours for structure '{roi_name}'")
-        
+                roi_name = roi_names.get(roi.ReferencedROINumber, f"ROI-{roi.ReferencedROINumber}")
+                structures[roi_name] = {'color': color, 'contours': contours}
+                st.info(f"Estructura {roi_name}: {contour_count} contornos cargados")
+            
         return structures
-    
     except Exception as e:
-        st.error(f"Error reading RTSTRUCT: {e}")
+        st.error(f"Error leyendo estructura: {e}")
         import traceback
-        st.error(traceback.format_exc())
-        return {}
+        st.code(traceback.format_exc())
+        return None
 
 # --- Parte 3: Funciones de visualización ---
 
-def patient_to_voxel(point, volume_info):
+def patient_to_voxel(points, volume_info):
     """
-    Converts a single point from patient coordinate space to voxel indices.
-    Returns the coordinates in order expected by the current view (x,y).
+    Convierte puntos del espacio del paciente (físico) al espacio de vóxeles (índices de la matriz).
+    Esta función mejorada tiene en cuenta la orientación de la imagen.
     """
-    # Extract necessary info
-    origin = np.array(volume_info['origin'])
-    spacing = np.array(volume_info['spacing'])
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"Se esperaba (N, 3) puntos, recibido {points.shape}")
+
+    origin = np.asarray(volume_info['origin'], dtype=np.float32)
+    spacing = np.asarray(volume_info['spacing'], dtype=np.float32)
+    direction = volume_info['direction']
     
-    # Basic transformation (physical space to index space)
-    voxel_point = (point - origin) / spacing
+    # Invertir la matriz de dirección para transformar del espacio físico al espacio del voxel
+    inv_direction = np.linalg.inv(direction)
     
-    # Round to nearest integer for index
-    voxel_point = np.round(voxel_point).astype(int)
+    # Transponer para procesamiento vectorial
+    adjusted_points = np.zeros_like(points)
     
-    return voxel_point
+    for i in range(len(points)):
+        # Primero aplicar la matriz de dirección inversa
+        vec = np.dot(inv_direction, points[i] - origin)
+        # Luego aplicar el espaciado
+        adjusted_points[i] = vec / spacing
+        
+    return adjusted_points
 
 
 def apply_window(img, window_center, window_width):
@@ -240,93 +217,91 @@ def apply_window(img, window_center, window_width):
 
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
     """
-    Improved version of draw_slice that correctly handles contours on different planes
+    Versión mejorada de la función para dibujar contornos con mejor depuración
     """
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Get slice image
+    # Obtener la imagen del corte
     if plane == 'axial':
         img = volume[slice_idx, :, :]
-        slice_pos = slice_idx * volume_info['spacing'][2] + volume_info['origin'][2]
-        view_axes = [0, 1]  # X,Y axes for this view
-        depth_axis = 2  # Z is depth axis
     elif plane == 'coronal':
         img = volume[:, slice_idx, :]
-        slice_pos = slice_idx * volume_info['spacing'][1] + volume_info['origin'][1]
-        view_axes = [0, 2]  # X,Z axes 
-        depth_axis = 1  # Y is depth axis
     elif plane == 'sagittal':
         img = volume[:, :, slice_idx]
-        slice_pos = slice_idx * volume_info['spacing'][0] + volume_info['origin'][0]
-        view_axes = [1, 2]  # Y,Z axes
-        depth_axis = 0  # X is depth axis
     else:
-        raise ValueError("Invalid plane")
+        raise ValueError("Plano inválido")
 
-    # Apply window
-    img_windowed = apply_window(img, window[1], window[0])
+    # Aplicar ventana
+    img = apply_window(img, window[1], window[0])
     if invert_colors:
-        img_windowed = 1.0 - img_windowed
+        img = 1.0 - img
 
-    # Show base image
-    ax.imshow(img_windowed, cmap='gray')
+    # Mostrar imagen base
+    ax.imshow(img, cmap='gray')
 
-    # Draw contours
+    # Dibujar contornos - versión simplificada para depuración
     if structures:
         for name, struct in structures.items():
-            drawn_contours = 0
-            all_x_points = []
-            all_y_points = []
+            # Contador para depuración
+            contour_drawn = 0
             
             for contour in struct['contours']:
-                points = contour['points']
+                raw_points = contour['points']
                 
-                # Check if this contour should be shown in this slice
-                # Use the contour's position along the depth axis
-                mean_depth_pos = np.mean(points[:, depth_axis])
-                slice_thickness = volume_info['spacing'][depth_axis]
+                # Convertir puntos físicos a índices de matriz simplificado
+                origin = np.array(volume_info['origin'])
+                spacing = np.array(volume_info['spacing'])
                 
-                # Only show contours that are close to this slice
-                if abs(mean_depth_pos - slice_pos) <= slice_thickness:
-                    # Project points to 2D for this view
-                    points_2d = []
-                    
-                    for point in points:
-                        # Convert to voxel space
-                        voxel_point = patient_to_voxel(point, volume_info)
-                        # Extract the 2 relevant axes for this view
-                        point_2d = [voxel_point[view_axes[0]], voxel_point[view_axes[1]]]
-                        points_2d.append(point_2d)
-                    
-                    # Only draw if we have enough points
-                    if len(points_2d) >= 3:
-                        points_2d = np.array(points_2d)
-                        # Flip y-coordinates for proper display (matplotlib coordinate system)
-                        if plane == 'axial':
-                            # For axial view, flip y to match image display
-                            points_2d[:, 1] = img.shape[0] - points_2d[:, 1]
-                        
-                        # Create and add polygon
-                        polygon = patches.Polygon(points_2d, closed=True, 
-                                                 fill=False, edgecolor=struct['color'], 
-                                                 linewidth=linewidth)
-                        ax.add_patch(polygon)
-                        drawn_contours += 1
-                        
-                        # Collect points for calculating center
-                        all_x_points.extend(points_2d[:, 0])
-                        all_y_points.extend(points_2d[:, 1])
+                points = np.zeros_like(raw_points)
+                # Transformación básica sin matrices de dirección
+                points = (raw_points - origin) / spacing
+                
+                # Extraer coordenadas según el plano
+                if plane == 'axial':
+                    # Para vista axial, necesitamos puntos con z cercana al slice actual
+                    slice_pos = slice_idx * spacing[2] + origin[2]
+                    if abs(contour['z'] - slice_pos) < spacing[2]:
+                        # Extraer solo coordenadas x,y para este plano
+                        pts = points[:, [0, 1]]
+                        if len(pts) >= 3:
+                            polygon = patches.Polygon(pts, closed=True, fill=False, 
+                                                    edgecolor=struct['color'], linewidth=linewidth)
+                            ax.add_patch(polygon)
+                            contour_drawn += 1
+                
+                elif plane == 'coronal':
+                    # Para vista coronal (y constante)
+                    slice_pos = slice_idx * spacing[1] + origin[1]
+                    mask = np.abs(raw_points[:, 1] - slice_pos) < spacing[1]
+                    if np.any(mask):
+                        pts = points[mask][:, [0, 2]]
+                        if len(pts) >= 3:
+                            polygon = patches.Polygon(pts, closed=True, fill=False, 
+                                                    edgecolor=struct['color'], linewidth=linewidth)
+                            ax.add_patch(polygon)
+                            contour_drawn += 1
+                
+                elif plane == 'sagittal':
+                    # Para vista sagital (x constante)
+                    slice_pos = slice_idx * spacing[0] + origin[0]
+                    mask = np.abs(raw_points[:, 0] - slice_pos) < spacing[0]
+                    if np.any(mask):
+                        pts = points[mask][:, [1, 2]]
+                        if len(pts) >= 3:
+                            polygon = patches.Polygon(pts, closed=True, fill=False, 
+                                                    edgecolor=struct['color'], linewidth=linewidth)
+                            ax.add_patch(polygon)
+                            contour_drawn += 1
             
-            # Show structure name at centroid of all points
-            if drawn_contours > 0 and show_names and all_x_points and all_y_points:
-                x_center = np.mean(all_x_points)
-                y_center = np.mean(all_y_points)
-                ax.text(x_center, y_center, name, 
-                       color=struct['color'], fontsize=9, weight='bold',
-                       ha='center', va='center', bbox=dict(facecolor='black', alpha=0.2))
+            # Si se dibujaron contornos, mostrar el nombre
+            if contour_drawn > 0 and show_names:
+                # Marcar en el centro de la imagen para depuración
+                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", 
+                       color=struct['color'], fontsize=8,
+                       ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
 
-    # Add slice information
+    # Agregar información de depuración en la esquina
     plt.text(5, 15, f"{plane} - slice {slice_idx}", color='white', 
              bbox=dict(facecolor='black', alpha=0.5))
 
