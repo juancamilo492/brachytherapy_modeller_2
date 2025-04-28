@@ -119,7 +119,7 @@ def load_dicom_series(file_list):
             if slice_spacing > 0:
                 slice_thickness = slice_spacing
 
-    spacing = pixel_spacing + [slice_thickness]
+    spacing = list(pixel_spacing) + [slice_thickness]
     origin = getattr(sample, 'ImagePositionPatient', [0, 0, 0])
     direction = getattr(sample, 'ImageOrientationPatient', [1, 0, 0, 0, 1, 0])
 
