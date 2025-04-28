@@ -293,35 +293,34 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                             contour_drawn += 1
 
                 elif plane == 'coronal':
-                    for name, struct in structures.items():
-                        color = struct['color']
-                        for contour in struct['contours']:
-                            points = contour['points']
-                            # Nueva forma: proyectamos todos los puntos (no sólo los cercanos)
-                            pixel_points = np.zeros((points.shape[0], 2))
-                            pixel_points[:, 0] = (points[:, 0] - origin[0]) / spacing[0]  # X
-                            pixel_points[:, 1] = (points[:, 2] - origin[2]) / spacing[2]  # Z
-                
-                            # Dibujar siempre (incluso si no coincide perfecto)
-                            polygon = patches.Polygon(pixel_points, closed=False,
-                                                       fill=False, edgecolor=color,
-                                                       linewidth=linewidth)
-                            ax.add_patch(polygon)
-                
-                elif plane == 'sagittal':
-                    for name, struct in structures.items():
-                        color = struct['color']
-                        for contour in struct['contours']:
-                            points = contour['points']
-                            pixel_points = np.zeros((points.shape[0], 2))
-                            pixel_points[:, 0] = (points[:, 1] - origin[1]) / spacing[1]  # Y
-                            pixel_points[:, 1] = (points[:, 2] - origin[2]) / spacing[2]  # Z
-                
-                            polygon = patches.Polygon(pixel_points, closed=False,
-                                                       fill=False, edgecolor=color,
-                                                       linewidth=linewidth)
-                            ax.add_patch(polygon)
+                    # Verificar cercanía en Y
+                    mask = np.abs(raw_points[:, 1] - current_slice_pos) < spacing[1]
+                    if np.sum(mask) >= 3:
+                        selected_points = raw_points[mask]
+                        pixel_points = np.zeros((selected_points.shape[0], 2))
+                        pixel_points[:, 0] = (selected_points[:, 0] - origin[0]) / spacing[0]  # X
+                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]  # Z
 
+                        polygon = patches.Polygon(pixel_points, closed=True,
+                                                   fill=False, edgecolor=color,
+                                                   linewidth=linewidth)
+                        ax.add_patch(polygon)
+                        contour_drawn += 1
+
+                elif plane == 'sagittal':
+                    # Verificar cercanía en X
+                    mask = np.abs(raw_points[:, 0] - current_slice_pos) < spacing[0]
+                    if np.sum(mask) >= 3:
+                        selected_points = raw_points[mask]
+                        pixel_points = np.zeros((selected_points.shape[0], 2))
+                        pixel_points[:, 0] = (selected_points[:, 1] - origin[1]) / spacing[1]  # Y
+                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]  # Z
+
+                        polygon = patches.Polygon(pixel_points, closed=True,
+                                                   fill=False, edgecolor=color,
+                                                   linewidth=linewidth)
+                        ax.add_patch(polygon)
+                        contour_drawn += 1
 
             if contour_drawn > 0 and show_names:
                 ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})",
