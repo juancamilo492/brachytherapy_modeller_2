@@ -589,19 +589,7 @@ if uploaded_file:
             # Mostrar el código
             st.subheader("Código FreeCAD generado")
             st.code(codigo, language="python")
-            
-            # Instrucciones de uso
-            st.subheader("Cómo usar este código en FreeCAD")
-            st.markdown("""
-            1. Copie el código generado
-            2. Abra FreeCAD
-            3. Vaya a Vista → Paneles → Consola Python
-            4. Pegue el código en la consola y presione Enter
-            5. El objeto se creará automáticamente en su documento
-            
-            **Nota:** Si recibe un error relacionado con `Gui`, simplemente elimine o comente las líneas que contienen `Gui` ya que esas son solo para mejorar la visualización.
-            """)
-            
+                    
             # Botón de descarga
             st.download_button(
                 label="Descargar código FreeCAD (.py)",
