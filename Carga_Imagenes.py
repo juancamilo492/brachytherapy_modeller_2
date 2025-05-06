@@ -1,7 +1,7 @@
 import os
 import io
 import zipfile
-import tempfile
+import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -26,18 +26,42 @@ st.markdown("""
 # Título principal
 st.markdown('<p class="giant-title">Brachyanalysis</p>', unsafe_allow_html=True)
 
+# --- Inicializar session_state ---
+if 'volume' not in st.session_state:
+    st.session_state.volume = None
+if 'volume_info' not in st.session_state:
+    st.session_state.volume_info = None
+if 'structures' not in st.session_state:
+    st.session_state.structures = None
+if 'temp_dir' not in st.session_state:
+    st.session_state.temp_dir = None
+
 # --- Sidebar ---
 st.sidebar.markdown('<p class="sidebar-title">Configuración</p>', unsafe_allow_html=True)
 uploaded_file = st.sidebar.file_uploader("Sube un archivo ZIP con tus imágenes DICOM", type="zip")
 
+# Botón para limpiar datos y archivos
+if st.sidebar.button("Limpiar datos y archivos"):
+    if st.session_state.temp_dir and os.path.exists(st.session_state.temp_dir):
+        shutil.rmtree(st.session_state.temp_dir)
+    st.session_state.volume = None
+    st.session_state.volume_info = None
+    st.session_state.structures = None
+    st.session_state.temp_dir = None
+    st.success("✅ Datos y archivos limpiados.")
+
 # --- Funciones auxiliares para cargar archivos DICOM y estructuras ---
 
 def extract_zip(uploaded_zip):
-    """Extrae archivos de un ZIP subido"""
-    temp_dir = tempfile.mkdtemp()
+    """Extrae archivos de un ZIP subido a un directorio persistente"""
+    extract_dir = os.path.join(os.getcwd(), "dicom_files")
+    if os.path.exists(extract_dir):
+        shutil.rmtree(extract_dir)  # Limpiar directorio anterior
+    os.makedirs(extract_dir)
+
     with zipfile.ZipFile(io.BytesIO(uploaded_zip.read()), 'r') as zip_ref:
-        zip_ref.extractall(temp_dir)
-    return temp_dir
+        zip_ref.extractall(extract_dir)
+    return extract_dir
 
 def find_dicom_series(directory):
     """Busca archivos DICOM y los agrupa por SeriesInstanceUID"""
@@ -97,11 +121,9 @@ def load_dicom_series(file_list):
     # Extraer información de spacings
     sample = dicom_files[0][1]
     pixel_spacing = getattr(sample, 'PixelSpacing', [1,1])
-    # Asegurarse de que pixel_spacing sea una lista regular de Python
     pixel_spacing = list(map(float, pixel_spacing))
     slice_thickness = float(getattr(sample, 'SliceThickness', 1))
     
-    # Corregido: pixel_spacing ya está convertido a lista regular
     spacing = pixel_spacing + [slice_thickness]
     
     origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
@@ -144,10 +166,8 @@ def load_rtstruct(file_path):
             st.warning("El archivo RTSTRUCT no contiene secuencia ROIContour")
             return structures
         
-        # Mapeo de ROI Number a ROI Name
         roi_names = {roi.ROINumber: roi.ROIName for roi in struct.StructureSetROISequence}
         
-        # Debug info
         st.info(f"Estructuras encontradas: {', '.join(roi_names.values())}")
         
         for roi in struct.ROIContourSequence:
@@ -175,10 +195,7 @@ def load_rtstruct(file_path):
 # --- Parte 3: Funciones de visualización ---
 
 def patient_to_voxel(points, volume_info):
-    """
-    Convierte puntos del espacio del paciente (físico) al espacio de vóxeles (índices de la matriz).
-    Esta función mejorada tiene en cuenta la orientación de la imagen.
-    """
+    """Convierte puntos del espacio del paciente al espacio de vóxeles"""
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError(f"Se esperaba (N, 3) puntos, recibido {points.shape}")
 
@@ -186,43 +203,31 @@ def patient_to_voxel(points, volume_info):
     spacing = np.asarray(volume_info['spacing'], dtype=np.float32)
     direction = volume_info['direction']
     
-    # Invertir la matriz de dirección para transformar del espacio físico al espacio del voxel
     inv_direction = np.linalg.inv(direction)
     
-    # Transponer para procesamiento vectorial
     adjusted_points = np.zeros_like(points)
     
     for i in range(len(points)):
-        # Primero aplicar la matriz de dirección inversa
         vec = np.dot(inv_direction, points[i] - origin)
-        # Luego aplicar el espaciado
         adjusted_points[i] = vec / spacing
         
     return adjusted_points
 
-
 def apply_window(img, window_center, window_width):
     """Aplica ventana de visualización a la imagen"""
     img = img.astype(np.float32)
-
     min_value = window_center - window_width / 2
     max_value = window_center + window_width / 2
-
-    img = np.clip(img, min_value, max_value)  # Recortar intensidades
-    img = (img - min_value) / (max_value - min_value)  # Normalizar 0-1
-    img = np.clip(img, 0, 1)  # Garantizar dentro [0,1]
-
+    img = np.clip(img, min_value, max_value)
+    img = (img - min_value) / (max_value - min_value)
+    img = np.clip(img, 0, 1)
     return img
 
-
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
-    """
-    Dibuja un corte de un volumen con contornos superpuestos, funcionando para planos axial, coronal y sagital.
-    """
+    """Dibuja un corte de un volumen con contornos superpuestos"""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Obtener la imagen del corte
     if plane == 'axial':
         img = volume[slice_idx, :, :]
     elif plane == 'coronal':
@@ -232,15 +237,12 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
     else:
         raise ValueError("Plano inválido")
 
-    # Aplicar ventana
     img = apply_window(img, window[1], window[0])
     if invert_colors:
         img = 1.0 - img
 
-    # Mostrar imagen base
     ax.imshow(img, cmap='gray')
 
-    # Mostrar texto de slice y posición física
     origin = np.array(volume_info['origin'])
     spacing = np.array(volume_info['spacing'])
     
@@ -262,7 +264,6 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
     ax.text(5, 30, coord_label, color='yellow',
             bbox=dict(facecolor='black', alpha=0.5))
 
-    # Dibujar contornos si existen estructuras
     if structures:
         for name, struct in structures.items():
             contour_drawn = 0
@@ -272,7 +273,6 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                 raw_points = contour['points']
 
                 if plane == 'axial':
-                    # Verificar cercanía en Z
                     contour_z_values = raw_points[:, 2]
                     min_z = np.min(contour_z_values)
                     max_z = np.max(contour_z_values)
@@ -280,45 +280,40 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
 
                     if (min_z - tolerance <= current_slice_pos <= max_z + tolerance or
                         abs(contour['z'] - current_slice_pos) <= tolerance):
-
                         pixel_points = np.zeros((raw_points.shape[0], 2))
                         pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]
                         pixel_points[:, 1] = (raw_points[:, 1] - origin[1]) / spacing[1]
 
                         if len(pixel_points) >= 3:
                             polygon = patches.Polygon(pixel_points, closed=True,
-                                                       fill=False, edgecolor=color,
-                                                       linewidth=linewidth)
+                                                     fill=False, edgecolor=color,
+                                                     linewidth=linewidth)
                             ax.add_patch(polygon)
                             contour_drawn += 1
 
                 elif plane == 'coronal':
-                    # Verificar cercanía en Y
                     mask = np.abs(raw_points[:, 1] - current_slice_pos) < spacing[1]
                     if np.sum(mask) >= 3:
                         selected_points = raw_points[mask]
                         pixel_points = np.zeros((selected_points.shape[0], 2))
-                        pixel_points[:, 0] = (selected_points[:, 0] - origin[0]) / spacing[0]  # X
-                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]  # Z
-
+                        pixel_points[:, 0] = (selected_points[:, 0] - origin[0]) / spacing[0]
+                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]
                         polygon = patches.Polygon(pixel_points, closed=True,
-                                                   fill=False, edgecolor=color,
-                                                   linewidth=linewidth)
+                                                 fill=False, edgecolor=color,
+                                                 linewidth=linewidth)
                         ax.add_patch(polygon)
                         contour_drawn += 1
 
                 elif plane == 'sagittal':
-                    # Verificar cercanía en X
                     mask = np.abs(raw_points[:, 0] - current_slice_pos) < spacing[0]
                     if np.sum(mask) >= 3:
                         selected_points = raw_points[mask]
                         pixel_points = np.zeros((selected_points.shape[0], 2))
-                        pixel_points[:, 0] = (selected_points[:, 1] - origin[1]) / spacing[1]  # Y
-                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]  # Z
-
+                        pixel_points[:, 0] = (selected_points[:, 1] - origin[1]) / spacing[1]
+                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]
                         polygon = patches.Polygon(pixel_points, closed=True,
-                                                   fill=False, edgecolor=color,
-                                                   linewidth=linewidth)
+                                                 fill=False, edgecolor=color,
+                                                 linewidth=linewidth)
                         ax.add_patch(polygon)
                         contour_drawn += 1
 
@@ -329,7 +324,6 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
 
     plt.tight_layout()
     return fig
-
 
 # --- Parte 4: Interfaz principal ---
 
@@ -345,19 +339,26 @@ if uploaded_file:
         # Cargar el volumen e información
         volume, volume_info = load_dicom_series(dicom_files)
 
+        # Almacenar en session_state
+        st.session_state.volume = volume
+        st.session_state.volume_info = volume_info
+        st.session_state.temp_dir = temp_dir
+
         # Cargar estructuras si están disponibles
         structures = None
         if structure_files:
             structures = load_rtstruct(structure_files[0])
             if structures:
                 st.success(f"✅ Se cargaron {len(structures)} estructuras.")
+                st.session_state.structures = structures
             else:
                 st.warning("⚠️ No se encontraron estructuras RTSTRUCT.")
+        else:
+            st.session_state.structures = None
 
         if volume is not None:
             st.sidebar.markdown('<p class="sidebar-title">Visualización</p>', unsafe_allow_html=True)
 
-            # Definir límites de los sliders
             max_axial = volume.shape[0] - 1
             max_coronal = volume.shape[1] - 1
             max_sagittal = volume.shape[2] - 1
@@ -436,20 +437,18 @@ if uploaded_file:
                  "Columna ósea (Spine Bone)", "Aire (Air)", "Grasa (Fat)", "Metal", "Personalizado"]
             )
 
-
             if window_option == "Default":
                 sample = dicom_files[0]
                 try:
                     dcm = pydicom.dcmread(sample, force=True)
                     window_width = getattr(dcm, 'WindowWidth', [400])[0] if hasattr(dcm, 'WindowWidth') else 400
                     window_center = getattr(dcm, 'WindowCenter', [40])[0] if hasattr(dcm, 'WindowCenter') else 40
-                    # Asegurar que los valores son números, ya que pueden ser múltiples o estar en formato especial
                     if isinstance(window_width, (list, tuple)):
                         window_width = window_width[0]
                     if isinstance(window_center, (list, tuple)):
                         window_center = window_center[0]
                 except Exception:
-                    window_width, window_center = 400, 40  # Valores por defecto si hay algún error
+                    window_width, window_center = 400, 40
             elif window_option == "Cerebro (Brain)":
                 window_width, window_center = 80, 40
             elif window_option == "Pulmón (Lung)":
@@ -481,7 +480,6 @@ if uploaded_file:
             show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
             linewidth = st.sidebar.slider("Grosor líneas", 1, 8, 2)
 
-            # Mostrar las imágenes en tres columnas
             col1, col2, col3 = st.columns(3)
 
             with col1:
