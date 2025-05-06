@@ -1,32 +1,48 @@
 import streamlit as st
-import cadquery as cq
-import tempfile
-import os
 
-# Parámetros desde la interfaz de usuario
-st.title("Cilindro con punta redondeada (tipo tampón)")
+st.title("Generador de cilindro con punta redondeada (FreeCAD)")
 
+# Parámetros de entrada
 diametro = st.slider("Diámetro (mm)", min_value=5, max_value=50, value=10)
 longitud = st.slider("Longitud total (mm)", min_value=10, max_value=100, value=50)
 
-# Cálculos derivados
+# Generar el código de FreeCAD como texto
+codigo = f"""import FreeCAD as App
+import Part
+
+# Parámetros
+diametro = {diametro}
+longitud = {longitud}
 radio = diametro / 2
-cuerpo_cilindro = longitud - radio  # parte recta del cilindro, excluyendo la punta
+cuerpo_cilindro = longitud - radio
 
-# Modelado con CadQuery
-modelo = (
-    cq.Workplane("XY")
-    .circle(radio)
-    .extrude(cuerpo_cilindro)  # cuerpo del cilindro
-    .faces(">Z")
-    .workplane()
-    .sphere(radio)  # esfera completa
-    .cutBlind(-radio)  # dejar solo la mitad de la esfera (punta redondeada)
+# Crear cilindro
+cilindro = Part.makeCylinder(radio, cuerpo_cilindro)
+
+# Crear media esfera
+esfera = Part.makeSphere(radio)
+corte_plano = Part.makeBox(diametro, diametro, radio)
+corte_plano.translate(App.Vector(-radio, -radio, 0))
+media_esfera = esfera.cut(corte_plano)
+
+# Posicionar la media esfera en el extremo del cilindro
+media_esfera.translate(App.Vector(0, 0, cuerpo_cilindro))
+
+# Unir ambas partes
+solido_final = cilindro.fuse(media_esfera)
+
+# Mostrar en FreeCAD
+Part.show(solido_final)
+App.ActiveDocument.recompute()
+"""
+
+# Mostrar el código en la app
+st.code(codigo, language="python")
+
+# Descargar como archivo .py
+st.download_button(
+    label="Descargar código FreeCAD (.py)",
+    data=codigo,
+    file_name="cilindro_redondeado.py",
+    mime="text/x-python"
 )
-
-# Exportar a STL
-with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp:
-    cq.exporters.export(modelo, tmp.name)
-    st.download_button("Descargar STL", tmp.read(), file_name="cilindro_redondeado.stl")
-
-st.success("Modelo generado con éxito.")
