@@ -147,9 +147,6 @@ def load_rtstruct(file_path):
         # Mapeo de ROI Number a ROI Name
         roi_names = {roi.ROINumber: roi.ROIName for roi in struct.StructureSetROISequence}
         
-        # Debug info
-        st.info(f"Estructuras encontradas: {', '.join(roi_names.values())}")
-        
         for roi in struct.ROIContourSequence:
             color = np.array(roi.ROIDisplayColor) / 255.0 if hasattr(roi, 'ROIDisplayColor') else np.random.rand(3)
             contours = []
