@@ -128,10 +128,7 @@ def load_dicom_series(file_list):
         'size': volume.shape,
         'slice_positions': slice_positions
     }
-    
-    # Debug info
-    st.success(f"Volumen cargado: {volume.shape}, spacing: {spacing}")
-    
+        
     return volume, volume_info
 
 def load_rtstruct(file_path):
