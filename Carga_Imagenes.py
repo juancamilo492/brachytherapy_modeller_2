@@ -160,7 +160,6 @@ def load_rtstruct(file_path):
                 
                 roi_name = roi_names.get(roi.ReferencedROINumber, f"ROI-{roi.ReferencedROINumber}")
                 structures[roi_name] = {'color': color, 'contours': contours}
-                st.info(f"Estructura {roi_name}: {contour_count} contornos cargados")
             
         return structures
     except Exception as e:
