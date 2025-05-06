@@ -617,31 +617,5 @@ if uploaded_file:
                 mime="text/x-python"
             )
             
-            # Visualización esquemática
-            st.subheader("Vista previa esquemática")
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.write("Dimensiones:")
-                st.write(f"- Diámetro: {diametro_mm} mm")
-                st.write(f"- Altura total: {longitud_mm} mm")
-                st.write(f"- Altura del cuerpo: {altura_cuerpo} mm")
-                st.write(f"- Altura de la punta: {altura_punta} mm")
-            
-            with col2:
-                # Código ASCII art básico para representar el cilindro
-                altura_ascii = min(10, int(longitud_cm))
-                diametro_ascii = min(20, int(diametro_cm * 3))
-                
-                ascii_art = ""
-                # Punta redondeada
-                for i in range(int(altura_ascii * prop_punta/100)):
-                    espacios = abs(int(diametro_ascii/2) - i)
-                    ascii_art += " " * espacios + "o" * (diametro_ascii - espacios*2) + "\n"
-                
-                # Cuerpo cilíndrico
-                for i in range(int(altura_ascii * (100-prop_punta)/100)):
-                    ascii_art += " " + "|" + "-" * (diametro_ascii-4) + "|" + "\n"
-                
-                st.text(ascii_art)
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
