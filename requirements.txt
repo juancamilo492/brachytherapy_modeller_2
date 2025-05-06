@@ -6,3 +6,5 @@ SimpleITK
 pillow
 pydicom
 scikit-image
+cadquery
+OCP
