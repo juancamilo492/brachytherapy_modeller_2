@@ -539,9 +539,7 @@ if uploaded_file:
             altura_punta = round(longitud_mm * prop_punta/100, 2)
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
             
-            # Generar código FreeCAD
-            codigo = f"""
-            import FreeCAD as App
+            codigo = f"""import FreeCAD as App
             import Part
             
             # Crear un nuevo documento
@@ -560,6 +558,7 @@ if uploaded_file:
             # Crear punta redondeada (semiesfera)
             centro_semiesfera = App.Vector(0, 0, altura_cuerpo)
             punta = Part.makeSphere(radio, centro_semiesfera)
+            
             # Cortar la mitad inferior de la esfera
             box = Part.makeBox(diametro*2, diametro*2, altura_cuerpo)
             box.translate(App.Vector(-diametro, -diametro, -altura_cuerpo))
@@ -575,10 +574,12 @@ if uploaded_file:
             # Actualizar el documento
             doc.recompute()
             
-            # Vista
-            App.activeDocument().recompute()
-            Gui.activeDocument().activeView().viewAxonometric()
-            Gui.SendMsgToActiveView("ViewFit")
+            # Vista - Solo si estamos en la interfaz gráfica
+            if App.GuiUp:
+                import FreeCADGui as Gui
+                App.activeDocument().recompute()
+                Gui.activeDocument().activeView().viewAxonometric()
+                Gui.SendMsgToActiveView("ViewFit")
             
             print("Objeto creado con éxito con las siguientes dimensiones:")
             print(f"- Diámetro: {{diametro}} mm")
