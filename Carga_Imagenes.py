@@ -540,7 +540,8 @@ if uploaded_file:
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
             
             # Generar código FreeCAD
-            codigo = f"""import FreeCAD as App
+            codigo = f"""
+            import FreeCAD as App
             import Part
             
             # Crear un nuevo documento
