@@ -539,8 +539,7 @@ if uploaded_file:
             altura_punta = round(longitud_mm * prop_punta/100, 2)
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
             
-            codigo = 
-            f"""import FreeCAD as App
+            codigo = f"""import FreeCAD as App
             import Part
             
             # Crear un nuevo documento
