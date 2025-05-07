@@ -539,54 +539,55 @@ if uploaded_file:
             altura_punta = round(longitud_mm * prop_punta/100, 2)
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
             
-codigo = f"""import FreeCAD as App
-import Part
-
-# Crear un nuevo documento
-doc = App.newDocument()
-
-# Parámetros
-diametro = {diametro_mm}
-radio = diametro / 2
-altura_total = {longitud_mm}
-altura_cuerpo = {altura_cuerpo}
-altura_punta = {altura_punta}
-
-# Crear cuerpo cilíndrico
-cuerpo = Part.makeCylinder(radio, altura_cuerpo)
-
-# Crear punta redondeada (semiesfera)
-centro_semiesfera = App.Vector(0, 0, altura_cuerpo)
-punta = Part.makeSphere(radio, centro_semiesfera)
-
-# Cortar la mitad inferior de la esfera
-box = Part.makeBox(diametro*2, diametro*2, altura_cuerpo)
-box.translate(App.Vector(-diametro, -diametro, -altura_cuerpo))
-punta = punta.cut(box)
-
-# Unir cilindro y punta
-objeto_final = cuerpo.fuse(punta)
-
-# Crear un objeto en el documento de FreeCAD
-objeto = doc.addObject("Part::Feature", "CilindroConPunta")
-objeto.Shape = objeto_final
-
-# Actualizar el documento
-doc.recompute()
-
-# Vista - Solo si estamos en la interfaz gráfica
-if App.GuiUp:
-    import FreeCADGui as Gui
-    App.activeDocument().recompute()
-    Gui.activeDocument().activeView().viewAxonometric()
-    Gui.SendMsgToActiveView("ViewFit")
-
-print("Objeto creado con éxito con las siguientes dimensiones:")
-print(f"- Diámetro: {{diametro}} mm")
-print(f"- Altura total: {{altura_total}} mm")
-print(f"- Altura del cuerpo: {{altura_cuerpo}} mm")
-print(f"- Altura de la punta: {{altura_punta}} mm")
-"""
+            codigo = 
+            f"""import FreeCAD as App
+            import Part
+            
+            # Crear un nuevo documento
+            doc = App.newDocument()
+            
+            # Parámetros
+            diametro = {diametro_mm}
+            radio = diametro / 2
+            altura_total = {longitud_mm}
+            altura_cuerpo = {altura_cuerpo}
+            altura_punta = {altura_punta}
+            
+            # Crear cuerpo cilíndrico
+            cuerpo = Part.makeCylinder(radio, altura_cuerpo)
+            
+            # Crear punta redondeada (semiesfera)
+            centro_semiesfera = App.Vector(0, 0, altura_cuerpo)
+            punta = Part.makeSphere(radio, centro_semiesfera)
+            
+            # Cortar la mitad inferior de la esfera
+            box = Part.makeBox(diametro*2, diametro*2, altura_cuerpo)
+            box.translate(App.Vector(-diametro, -diametro, -altura_cuerpo))
+            punta = punta.cut(box)
+            
+            # Unir cilindro y punta
+            objeto_final = cuerpo.fuse(punta)
+            
+            # Crear un objeto en el documento de FreeCAD
+            objeto = doc.addObject("Part::Feature", "CilindroConPunta")
+            objeto.Shape = objeto_final
+            
+            # Actualizar el documento
+            doc.recompute()
+            
+            # Vista - Solo si estamos en la interfaz gráfica
+            if App.GuiUp:
+                import FreeCADGui as Gui
+                App.activeDocument().recompute()
+                Gui.activeDocument().activeView().viewAxonometric()
+                Gui.SendMsgToActiveView("ViewFit")
+            
+            print("Objeto creado con éxito con las siguientes dimensiones:")
+            print(f"- Diámetro: {{diametro}} mm")
+            print(f"- Altura total: {{altura_total}} mm")
+            print(f"- Altura del cuerpo: {{altura_cuerpo}} mm")
+            print(f"- Altura de la punta: {{altura_punta}} mm")
+            """
             
             # Mostrar el código
             st.subheader("Código FreeCAD generado")
