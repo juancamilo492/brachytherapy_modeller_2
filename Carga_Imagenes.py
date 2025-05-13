@@ -401,7 +401,7 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                         contour_drawn += 1
 
             if contour_drawn > 0 and show_names:
-                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize  fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
+                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
 
     if needle_trajectories:
         for traj in needle_trajectories:
