@@ -2,7 +2,7 @@ import os
 import io
 import zipfile
 import tempfile
-import numpy as np
+import numpy as npF
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
@@ -404,26 +404,51 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                 ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
 
     if needle_trajectories:
+        # Encontrar el centroide de CTV para alinear el cilindro
+        ctv_centroid = None
+        for name, struct in structures.items():
+            if name.startswith("CTV_"):
+                all_points = np.concatenate([c['points'] for c in struct['contours']])
+                ctv_centroid = np.mean(all_points, axis=0)
+                break
+        
+        if ctv_centroid is None:
+            st.warning("No se encontró CTV para alinear trayectorias")
+            return fig
+
         for traj in needle_trajectories:
-            start = traj['entry']
-            end = traj['end']
+            start = np.array(traj['entry'])
+            end = np.array(traj['end'])
             color = 'green' if traj['feasible'] else 'red'
 
+            # Alinear el cilindro con el centroide de CTV (x, y) y ajustar z
+            start[0:2] += ctv_centroid[0:2]
+            end[0:2] += ctv_centroid[0:2]
+            start[2] += ctv_centroid[2] - 50.0  # Suponer que la base del cilindro está 50 mm por debajo del centroide
+            end[2] += ctv_centroid[2] - 50.0
+
+            # Calcular intersección con el plano de la slice
             if plane == 'axial':
-                if abs(start[2] - current_slice_pos) < spacing[2] or abs(end[2] - current_slice_pos) < spacing[2]:
-                    start_2d = [(start[0] - origin[0]) / spacing[0], (start[1] - origin[1]) / spacing[1]]
-                    end_2d = [(end[0] - origin[0]) / spacing[0], (end[1] - origin[1]) / spacing[1]]
-                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
+                # Plano z = current_slice_pos
+                t = (current_slice_pos - start[2]) / (end[2] - start[2] + 1e-10)
+                if 0 <= t <= 1:  # La intersección está dentro del segmento
+                    intersect = start + t * (end - start)
+                    point_2d = [(intersect[0] - origin[0]) / spacing[0], (intersect[1] - origin[1]) / spacing[1]]
+                    ax.plot([point_2d[0]], [point_2d[1]], 'o', color=color, markersize=5)
             elif plane == 'coronal':
-                if abs(start[1] - current_slice_pos) < spacing[1] or abs(end[1] - current_slice_pos) < spacing[1]:
-                    start_2d = [(start[0] - origin[0]) / spacing[0], (start[2] - origin[2]) / spacing[2]]
-                    end_2d = [(end[0] - origin[0]) / spacing[0], (end[2] - origin[2]) / spacing[2]]
-                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
+                # Plano y = current_slice_pos
+                t = (current_slice_pos - start[1]) / (end[1] - start[1] + 1e-10)
+                if 0 <= t <= 1:
+                    intersect = start + t * (end - start)
+                    point_2d = [(intersect[0] - origin[0]) / spacing[0], (intersect[2] - origin[2]) / spacing[2]]
+                    ax.plot([point_2d[0]], [point_2d[1]], 'o', color=color, markersize=5)
             elif plane == 'sagittal':
-                if abs(start[0] - current_slice_pos) < spacing[0] or abs(end[0] - current_slice_pos) < spacing[0]:
-                    start_2d = [(start[1] - origin[1]) / spacing[1], (start[2] - origin[2]) / spacing[2]]
-                    end_2d = [(end[1] - origin[1]) / spacing[1], (end[2] - origin[2]) / spacing[2]]
-                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
+                # Plano x = current_slice_pos
+                t = (current_slice_pos - start[0]) / (end[0] - start[0] + 1e-10)
+                if 0 <= t <= 1:
+                    intersect = start + t * (end - start)
+                    point_2d = [(intersect[1] - origin[1]) / spacing[1], (intersect[2] - origin[2]) / spacing[2]]
+                    ax.plot([point_2d[0]], [point_2d[1]], 'o', color=color, markersize=5)
 
     plt.tight_layout()
     return fig
