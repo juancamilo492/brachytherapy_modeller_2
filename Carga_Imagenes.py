@@ -285,7 +285,7 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
             # Verificar colisiones con órganos sanos
             intersects = False
             for name, struct in healthy_structures.items():
-                for contour in struct['contLoganets']:
+                for contour in struct['contours']:
                     if line_intersects_contour(entry, end_point, contour['points'], margin):
                         intersects = True
                         break
