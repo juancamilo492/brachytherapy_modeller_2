@@ -215,7 +215,6 @@ def line_intersects_contour(line_start, line_end, contour_points, margin=2.0):
         return False
     line_dir = line_vec / line_len
     for point in contour_points:
-        # Proyectar el punto en la línea
         t = np.dot(point - line_start, line_dir)
         if 0 <= t <= line_len:
             proj_point = line_start + t * line_dir
@@ -280,13 +279,13 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
                     [0, 0, 1]
                 ])
                 dir_vec = rot_matrix @ dir_vec
-            dir_vec = dir_vec / np.linalg.norm(dir_dictionary(dir_vec)
+            dir_vec = dir_vec / np.linalg.norm(dir_vec)  # Corrección aquí
             end_point = entry + dir_vec * cylinder_length * 2  # Extender más allá del cilindro
 
             # Verificar colisiones con órganos sanos
             intersects = False
             for name, struct in healthy_structures.items():
-                for contour in struct['contours']:
+                for contour in struct['contLoganets']:
                     if line_intersects_contour(entry, end_point, contour['points'], margin):
                         intersects = True
                         break
@@ -402,9 +401,8 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                         contour_drawn += 1
 
             if contour_drawn > 0 and show_names:
-                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
+                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize  fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
 
-    # Dibujar trayectorias de agujas
     if needle_trajectories:
         for traj in needle_trajectories:
             start = traj['entry']
@@ -782,4 +780,3 @@ Posiciones y estado de las agujas:
 
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
-
