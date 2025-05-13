@@ -72,12 +72,16 @@ def load_dicom_series(file_list):
     for file_path in file_list:
         try:
             dcm = pydicom.dcmread(file_path, force=True)
-            if hasattr(dcm, 'pixel_array'):
+            if hasattr(dcm, 'pixel_array') and dcm.pixel_array is not None:
                 dicom_files.append((file_path, dcm))
-        except Exception:
+            else:
+                st.warning(f"Archivo {file_path} no contiene datos de píxeles válidos.")
+        except Exception as e:
+            st.warning(f"Error al leer {file_path}: {e}")
             continue
 
     if not dicom_files:
+        st.error("No se encontraron archivos DICOM con datos de píxeles válidos.")
         return None, None
 
     # Ordenar por InstanceNumber
@@ -85,26 +89,44 @@ def load_dicom_series(file_list):
     
     # Encontrar la forma más común
     shape_counts = {}
-    for _, dcm in dicom_files:
+    for file_path, dcm in dicom_files:
         shape = dcm.pixel_array.shape
         shape_counts[shape] = shape_counts.get(shape, 0) + 1
     
+    if not shape_counts:
+        st.error("No se encontraron imágenes con formas válidas para apilar.")
+        return None, None
+    
     best_shape = max(shape_counts, key=shape_counts.get)
-    slices = [d[1].pixel_array for d in dicom_files if d[1].pixel_array.shape == best_shape]
+    slices = []
+    for file_path, dcm in dicom_files:
+        if dcm.pixel_array.shape == best_shape:
+            slices.append(dcm.pixel_array)
+        else:
+            st.warning(f"Archivo {file_path} excluido: forma {dcm.pixel_array.shape} no coincide con {best_shape}.")
+
+    if not slices:
+        st.error(f"No se encontraron imágenes con la forma más común {best_shape} para apilar.")
+        return None, None
 
     # Crear volumen 3D
-    volume = np.stack(slices)
+    try:
+        volume = np.stack(slices)
+    except Exception as e:
+        st.error(f"Error al apilar imágenes: {e}")
+        st.write("Formas de las imágenes:", [s.shape for s in slices])
+        return None, None
 
     # Extraer información de spacings
     sample = dicom_files[0][1]
-    pixel_spacing = getattr(sample, 'PixelSpacing', [1,1])
+    pixel_spacing = getattr(sample, 'PixelSpacing', [1, 1])
     pixel_spacing = list(map(float, pixel_spacing))
     slice_thickness = float(getattr(sample, 'SliceThickness', 1))
     
     spacing = pixel_spacing + [slice_thickness]
     
-    origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
-    direction = getattr(sample, 'ImageOrientationPatient', [1,0,0,0,1,0])
+    origin = getattr(sample, 'ImagePositionPatient', [0, 0, 0])
+    direction = getattr(sample, 'ImageOrientationPatient', [1, 0, 0, 0, 1, 0])
 
     direction_matrix = np.array([
         [direction[0], direction[3], 0],
