@@ -2,7 +2,7 @@ import os
 import io
 import zipfile
 import tempfile
-import numpy as npF
+import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
@@ -72,16 +72,12 @@ def load_dicom_series(file_list):
     for file_path in file_list:
         try:
             dcm = pydicom.dcmread(file_path, force=True)
-            if hasattr(dcm, 'pixel_array') and dcm.pixel_array is not None:
+            if hasattr(dcm, 'pixel_array'):
                 dicom_files.append((file_path, dcm))
-            else:
-                st.warning(f"Archivo {file_path} no contiene datos de píxeles válidos.")
-        except Exception as e:
-            st.warning(f"Error al leer {file_path}: {e}")
+        except Exception:
             continue
 
     if not dicom_files:
-        st.error("No se encontraron archivos DICOM con datos de píxeles válidos.")
         return None, None
 
     # Ordenar por InstanceNumber
@@ -89,44 +85,26 @@ def load_dicom_series(file_list):
     
     # Encontrar la forma más común
     shape_counts = {}
-    for file_path, dcm in dicom_files:
+    for _, dcm in dicom_files:
         shape = dcm.pixel_array.shape
         shape_counts[shape] = shape_counts.get(shape, 0) + 1
     
-    if not shape_counts:
-        st.error("No se encontraron imágenes con formas válidas para apilar.")
-        return None, None
-    
     best_shape = max(shape_counts, key=shape_counts.get)
-    slices = []
-    for file_path, dcm in dicom_files:
-        if dcm.pixel_array.shape == best_shape:
-            slices.append(dcm.pixel_array)
-        else:
-            st.warning(f"Archivo {file_path} excluido: forma {dcm.pixel_array.shape} no coincide con {best_shape}.")
-
-    if not slices:
-        st.error(f"No se encontraron imágenes con la forma más común {best_shape} para apilar.")
-        return None, None
+    slices = [d[1].pixel_array for d in dicom_files if d[1].pixel_array.shape == best_shape]
 
     # Crear volumen 3D
-    try:
-        volume = np.stack(slices)
-    except Exception as e:
-        st.error(f"Error al apilar imágenes: {e}")
-        st.write("Formas de las imágenes:", [s.shape for s in slices])
-        return None, None
+    volume = np.stack(slices)
 
     # Extraer información de spacings
     sample = dicom_files[0][1]
-    pixel_spacing = getattr(sample, 'PixelSpacing', [1, 1])
+    pixel_spacing = getattr(sample, 'PixelSpacing', [1,1])
     pixel_spacing = list(map(float, pixel_spacing))
     slice_thickness = float(getattr(sample, 'SliceThickness', 1))
     
     spacing = pixel_spacing + [slice_thickness]
     
-    origin = getattr(sample, 'ImagePositionPatient', [0, 0, 0])
-    direction = getattr(sample, 'ImageOrientationPatient', [1, 0, 0, 0, 1, 0])
+    origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
+    direction = getattr(sample, 'ImageOrientationPatient', [1,0,0,0,1,0])
 
     direction_matrix = np.array([
         [direction[0], direction[3], 0],
@@ -426,51 +404,26 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                 ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
 
     if needle_trajectories:
-        # Encontrar el centroide de CTV para alinear el cilindro
-        ctv_centroid = None
-        for name, struct in structures.items():
-            if name.startswith("CTV_"):
-                all_points = np.concatenate([c['points'] for c in struct['contours']])
-                ctv_centroid = np.mean(all_points, axis=0)
-                break
-        
-        if ctv_centroid is None:
-            st.warning("No se encontró CTV para alinear trayectorias")
-            return fig
-
         for traj in needle_trajectories:
-            start = np.array(traj['entry'])
-            end = np.array(traj['end'])
+            start = traj['entry']
+            end = traj['end']
             color = 'green' if traj['feasible'] else 'red'
 
-            # Alinear el cilindro con el centroide de CTV (x, y) y ajustar z
-            start[0:2] += ctv_centroid[0:2]
-            end[0:2] += ctv_centroid[0:2]
-            start[2] += ctv_centroid[2] - 50.0  # Suponer que la base del cilindro está 50 mm por debajo del centroide
-            end[2] += ctv_centroid[2] - 50.0
-
-            # Calcular intersección con el plano de la slice
             if plane == 'axial':
-                # Plano z = current_slice_pos
-                t = (current_slice_pos - start[2]) / (end[2] - start[2] + 1e-10)
-                if 0 <= t <= 1:  # La intersección está dentro del segmento
-                    intersect = start + t * (end - start)
-                    point_2d = [(intersect[0] - origin[0]) / spacing[0], (intersect[1] - origin[1]) / spacing[1]]
-                    ax.plot([point_2d[0]], [point_2d[1]], 'o', color=color, markersize=5)
+                if abs(start[2] - current_slice_pos) < spacing[2] or abs(end[2] - current_slice_pos) < spacing[2]:
+                    start_2d = [(start[0] - origin[0]) / spacing[0], (start[1] - origin[1]) / spacing[1]]
+                    end_2d = [(end[0] - origin[0]) / spacing[0], (end[1] - origin[1]) / spacing[1]]
+                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
             elif plane == 'coronal':
-                # Plano y = current_slice_pos
-                t = (current_slice_pos - start[1]) / (end[1] - start[1] + 1e-10)
-                if 0 <= t <= 1:
-                    intersect = start + t * (end - start)
-                    point_2d = [(intersect[0] - origin[0]) / spacing[0], (intersect[2] - origin[2]) / spacing[2]]
-                    ax.plot([point_2d[0]], [point_2d[1]], 'o', color=color, markersize=5)
+                if abs(start[1] - current_slice_pos) < spacing[1] or abs(end[1] - current_slice_pos) < spacing[1]:
+                    start_2d = [(start[0] - origin[0]) / spacing[0], (start[2] - origin[2]) / spacing[2]]
+                    end_2d = [(end[0] - origin[0]) / spacing[0], (end[2] - origin[2]) / spacing[2]]
+                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
             elif plane == 'sagittal':
-                # Plano x = current_slice_pos
-                t = (current_slice_pos - start[0]) / (end[0] - start[0] + 1e-10)
-                if 0 <= t <= 1:
-                    intersect = start + t * (end - start)
-                    point_2d = [(intersect[1] - origin[1]) / spacing[1], (intersect[2] - origin[2]) / spacing[2]]
-                    ax.plot([point_2d[0]], [point_2d[1]], 'o', color=color, markersize=5)
+                if abs(start[0] - current_slice_pos) < spacing[0] or abs(end[0] - current_slice_pos) < spacing[0]:
+                    start_2d = [(start[1] - origin[1]) / spacing[1], (start[2] - origin[2]) / spacing[2]]
+                    end_2d = [(end[1] - origin[1]) / spacing[1], (end[2] - origin[2]) / spacing[2]]
+                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
 
     plt.tight_layout()
     return fig
