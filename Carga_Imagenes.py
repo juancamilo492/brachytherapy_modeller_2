@@ -10,6 +10,7 @@ import SimpleITK as sitk
 import pydicom
 import matplotlib.patches as patches
 import time
+import math
 
 # Configuración de Streamlit
 st.set_page_config(page_title="Brachyanalysis", layout="wide")
@@ -97,11 +98,9 @@ def load_dicom_series(file_list):
     # Extraer información de spacings
     sample = dicom_files[0][1]
     pixel_spacing = getattr(sample, 'PixelSpacing', [1,1])
-    # Asegurarse de que pixel_spacing sea una lista regular de Python
     pixel_spacing = list(map(float, pixel_spacing))
     slice_thickness = float(getattr(sample, 'SliceThickness', 1))
     
-    # Corregido: pixel_spacing ya está convertido a lista regular
     spacing = pixel_spacing + [slice_thickness]
     
     origin = getattr(sample, 'ImagePositionPatient', [0,0,0])
@@ -113,7 +112,7 @@ def load_dicom_series(file_list):
         [direction[2], direction[5], 1]
     ])
 
-    # Añadir posiciones Z de cada corte para uso posterior
+    # Añadir posiciones Z de cada corte
     slice_positions = []
     for _, dcm in dicom_files:
         if hasattr(dcm, 'ImagePositionPatient'):
@@ -141,7 +140,6 @@ def load_rtstruct(file_path):
             st.warning("El archivo RTSTRUCT no contiene secuencia ROIContour")
             return structures
         
-        # Mapeo de ROI Number a ROI Name
         roi_names = {roi.ROINumber: roi.ROIName for roi in struct.StructureSetROISequence}
         
         for roi in struct.ROIContourSequence:
@@ -149,11 +147,9 @@ def load_rtstruct(file_path):
             contours = []
             
             if hasattr(roi, 'ContourSequence'):
-                contour_count = 0
                 for contour in roi.ContourSequence:
                     pts = np.array(contour.ContourData).reshape(-1, 3)
                     contours.append({'points': pts, 'z': np.mean(pts[:,2])})
-                    contour_count += 1
                 
                 roi_name = roi_names.get(roi.ReferencedROINumber, f"ROI-{roi.ReferencedROINumber}")
                 structures[roi_name] = {'color': color, 'contours': contours}
@@ -165,13 +161,10 @@ def load_rtstruct(file_path):
         st.code(traceback.format_exc())
         return None
 
-# --- Parte 3: Funciones de visualización ---
+# --- Parte 3: Funciones de visualización y análisis ---
 
 def patient_to_voxel(points, volume_info):
-    """
-    Convierte puntos del espacio del paciente (físico) al espacio de vóxeles (índices de la matriz).
-    Esta función mejorada tiene en cuenta la orientación de la imagen.
-    """
+    """Convierte puntos del espacio del paciente al espacio de vóxeles"""
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError(f"Se esperaba (N, 3) puntos, recibido {points.shape}")
 
@@ -179,43 +172,154 @@ def patient_to_voxel(points, volume_info):
     spacing = np.asarray(volume_info['spacing'], dtype=np.float32)
     direction = volume_info['direction']
     
-    # Invertir la matriz de dirección para transformar del espacio físico al espacio del voxel
     inv_direction = np.linalg.inv(direction)
     
-    # Transponer para procesamiento vectorial
     adjusted_points = np.zeros_like(points)
     
     for i in range(len(points)):
-        # Primero aplicar la matriz de dirección inversa
         vec = np.dot(inv_direction, points[i] - origin)
-        # Luego aplicar el espaciado
         adjusted_points[i] = vec / spacing
         
     return adjusted_points
 
-
 def apply_window(img, window_center, window_width):
     """Aplica ventana de visualización a la imagen"""
     img = img.astype(np.float32)
-
     min_value = window_center - window_width / 2
     max_value = window_center + window_width / 2
-
-    img = np.clip(img, min_value, max_value)  # Recortar intensidades
-    img = (img - min_value) / (max_value - min_value)  # Normalizar 0-1
-    img = np.clip(img, 0, 1)  # Garantizar dentro [0,1]
-
+    img = np.clip(img, min_value, max_value)
+    img = (img - min_value) / (max_value - min_value)
+    img = np.clip(img, 0, 1)
     return img
 
+def point_in_polygon(point, polygon):
+    """Determina si un punto 2D está dentro de un polígono 2D"""
+    x, y = point
+    n = len(polygon)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        if ((polygon[i][1] > y) != (polygon[j][1] > y)) and \
+           (x < (polygon[j][0] - polygon[i][0]) * (y - polygon[i][1]) / 
+           (polygon[j][1] - polygon[i][1] + 1e-10) + polygon[i][0]):
+            inside = not inside
+        j = i
+    return inside
 
-def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewidth=2, show_names=True, invert_colors=False):
-    """
-    Dibuja un corte de un volumen con contornos superpuestos, funcionando para planos axial, coronal y sagital.
-    """
+def line_intersects_contour(line_start, line_end, contour_points, margin=2.0):
+    """Verifica si una línea 3D intersecta un contorno con margen"""
+    from scipy.spatial import distance
+    line_vec = line_end - line_start
+    line_len = np.linalg.norm(line_vec)
+    if line_len == 0:
+        return False
+    line_dir = line_vec / line_len
+    for point in contour_points:
+        # Proyectar el punto en la línea
+        t = np.dot(point - line_start, line_dir)
+        if 0 <= t <= line_len:
+            proj_point = line_start + t * line_dir
+            dist = distance.euclidean(point, proj_point)
+            if dist < margin:
+                return True
+    return False
+
+def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length, structures, volume_info):
+    """Calcula trayectorias de agujas para alcanzar CTV evitando órganos sanos"""
+    needle_diameter = 3.0  # mm
+    needle_radius = needle_diameter / 2
+    cylinder_radius = cylinder_diameter / 2
+    needle_ring_radius = cylinder_radius * 0.7  # 70% del radio del cilindro
+
+    # Encontrar CTV y calcular su centroide
+    ctv_structure = None
+    for name, struct in structures.items():
+        if name.startswith("CTV_"):
+            ctv_structure = struct
+            break
+    
+    if not ctv_structure:
+        st.error("No se encontró estructura CTV")
+        return [], []
+
+    # Calcular centroide de CTV
+    all_points = np.concatenate([c['points'] for c in ctv_structure['contours']])
+    ctv_centroid = np.mean(all_points, axis=0)
+
+    # Generar posiciones de entrada de agujas en la base del cilindro
+    needle_entries = []
+    needle_trajectories = []
+    angles = np.linspace(0, 2 * np.pi, num_needles, endpoint=False)
+    for angle in angles:
+        x = needle_ring_radius * np.cos(angle)
+        y = needle_ring_radius * np.sin(angle)
+        z = 0  # Base del cilindro
+        needle_entries.append([x, y, z])
+
+    # Calcular trayectorias
+    healthy_structures = {name: s for name, s in structures.items() if not name.startswith("CTV_")}
+    spacing = volume_info['spacing']
+    margin = 2.0  # Margen de 2 mm
+
+    for entry in needle_entries:
+        entry = np.array(entry)
+        target = ctv_centroid
+        feasible = True
+        best_trajectory = None
+        best_angle = 0
+
+        # Probar trayectoria recta y ajustes angulares
+        for angle_adj in [0, 5, -5, 10, -10, 15, -15]:
+            # Rotar el vector de dirección
+            dir_vec = target - entry
+            if angle_adj != 0:
+                theta = np.deg2rad(angle_adj)
+                rot_matrix = np.array([
+                    [np.cos(theta), -np.sin(theta), 0],
+                    [np.sin(theta), np.cos(theta), 0],
+                    [0, 0, 1]
+                ])
+                dir_vec = rot_matrix @ dir_vec
+            dir_vec = dir_vec / np.linalg.norm(dir_dictionary(dir_vec)
+            end_point = entry + dir_vec * cylinder_length * 2  # Extender más allá del cilindro
+
+            # Verificar colisiones con órganos sanos
+            intersects = False
+            for name, struct in healthy_structures.items():
+                for contour in struct['contours']:
+                    if line_intersects_contour(entry, end_point, contour['points'], margin):
+                        intersects = True
+                        break
+                if intersects:
+                    break
+            
+            if not intersects:
+                best_trajectory = [entry, end_point]
+                best_angle = angle_adj
+                break
+
+        if best_trajectory:
+            needle_trajectories.append({
+                'entry': best_trajectory[0],
+                'end': best_trajectory[1],
+                'feasible': True,
+                'angle_adjustment': best_angle
+            })
+        else:
+            needle_trajectories.append({
+                'entry': entry,
+                'end': end_point,
+                'feasible': False,
+                'angle_adjustment': 0
+            })
+
+    return needle_entries, needle_trajectories
+
+def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle_trajectories=None, linewidth=2, show_names=True, invert_colors=False):
+    """Dibuja un corte con contornos y trayectorias de agujas"""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
-    # Obtener la imagen del corte
     if plane == 'axial':
         img = volume[slice_idx, :, :]
     elif plane == 'coronal':
@@ -225,15 +329,12 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
     else:
         raise ValueError("Plano inválido")
 
-    # Aplicar ventana
     img = apply_window(img, window[1], window[0])
     if invert_colors:
         img = 1.0 - img
 
-    # Mostrar imagen base
     ax.imshow(img, cmap='gray')
 
-    # Mostrar texto de slice y posición física
     origin = np.array(volume_info['origin'])
     spacing = np.array(volume_info['spacing'])
     
@@ -250,12 +351,9 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
         current_slice_pos = origin[0] + slice_idx * spacing[0]
         coord_label = f"X: {current_slice_pos:.2f} mm"
 
-    ax.text(5, 15, f"{plane} - slice {slice_idx}", color='white',
-            bbox=dict(facecolor='black', alpha=0.5))
-    ax.text(5, 30, coord_label, color='yellow',
-            bbox=dict(facecolor='black', alpha=0.5))
+    ax.text(5, 15, f"{plane} - slice {slice_idx}", color='white', bbox=dict(facecolor='black', alpha=0.5))
+    ax.text(5, 30, coord_label, color='yellow', bbox=dict(facecolor='black', alpha=0.5))
 
-    # Dibujar contornos si existen estructuras
     if structures:
         for name, struct in structures.items():
             contour_drawn = 0
@@ -265,7 +363,6 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
                 raw_points = contour['points']
 
                 if plane == 'axial':
-                    # Verificar cercanía en Z
                     contour_z_values = raw_points[:, 2]
                     min_z = np.min(contour_z_values)
                     max_z = np.max(contour_z_values)
@@ -273,56 +370,65 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, linewi
 
                     if (min_z - tolerance <= current_slice_pos <= max_z + tolerance or
                         abs(contour['z'] - current_slice_pos) <= tolerance):
-
                         pixel_points = np.zeros((raw_points.shape[0], 2))
                         pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]
                         pixel_points[:, 1] = (raw_points[:, 1] - origin[1]) / spacing[1]
 
                         if len(pixel_points) >= 3:
-                            polygon = patches.Polygon(pixel_points, closed=True,
-                                                       fill=False, edgecolor=color,
-                                                       linewidth=linewidth)
+                            polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
                             ax.add_patch(polygon)
                             contour_drawn += 1
 
                 elif plane == 'coronal':
-                    # Verificar cercanía en Y
                     mask = np.abs(raw_points[:, 1] - current_slice_pos) < spacing[1]
                     if np.sum(mask) >= 3:
                         selected_points = raw_points[mask]
                         pixel_points = np.zeros((selected_points.shape[0], 2))
-                        pixel_points[:, 0] = (selected_points[:, 0] - origin[0]) / spacing[0]  # X
-                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]  # Z
-
-                        polygon = patches.Polygon(pixel_points, closed=True,
-                                                   fill=False, edgecolor=color,
-                                                   linewidth=linewidth)
+                        pixel_points[:, 0] = (selected_points[:, 0] - origin[0]) / spacing[0]
+                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]
+                        polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
                         ax.add_patch(polygon)
                         contour_drawn += 1
 
                 elif plane == 'sagittal':
-                    # Verificar cercanía en X
                     mask = np.abs(raw_points[:, 0] - current_slice_pos) < spacing[0]
                     if np.sum(mask) >= 3:
                         selected_points = raw_points[mask]
                         pixel_points = np.zeros((selected_points.shape[0], 2))
-                        pixel_points[:, 0] = (selected_points[:, 1] - origin[1]) / spacing[1]  # Y
-                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]  # Z
-
-                        polygon = patches.Polygon(pixel_points, closed=True,
-                                                   fill=False, edgecolor=color,
-                                                   linewidth=linewidth)
+                        pixel_points[:, 0] = (selected_points[:, 1] - origin[1]) / spacing[1]
+                        pixel_points[:, 1] = (selected_points[:, 2] - origin[2]) / spacing[2]
+                        polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
                         ax.add_patch(polygon)
                         contour_drawn += 1
 
             if contour_drawn > 0 and show_names:
-                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})",
-                        color=color, fontsize=8, ha='center', va='center',
-                        bbox=dict(facecolor='white', alpha=0.7))
+                ax.text(img.shape[1]/2, img.shape[0]/2, f"{name} ({contour_drawn})", color=color, fontsize=8, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
+
+    # Dibujar trayectorias de agujas
+    if needle_trajectories:
+        for traj in needle_trajectories:
+            start = traj['entry']
+            end = traj['end']
+            color = 'green' if traj['feasible'] else 'red'
+
+            if plane == 'axial':
+                if abs(start[2] - current_slice_pos) < spacing[2] or abs(end[2] - current_slice_pos) < spacing[2]:
+                    start_2d = [(start[0] - origin[0]) / spacing[0], (start[1] - origin[1]) / spacing[1]]
+                    end_2d = [(end[0] - origin[0]) / spacing[0], (end[1] - origin[1]) / spacing[1]]
+                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
+            elif plane == 'coronal':
+                if abs(start[1] - current_slice_pos) < spacing[1] or abs(end[1] - current_slice_pos) < spacing[1]:
+                    start_2d = [(start[0] - origin[0]) / spacing[0], (start[2] - origin[2]) / spacing[2]]
+                    end_2d = [(end[0] - origin[0]) / spacing[0], (end[2] - origin[2]) / spacing[2]]
+                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
+            elif plane == 'sagittal':
+                if abs(start[0] - current_slice_pos) < spacing[0] or abs(end[0] - current_slice_pos) < spacing[0]:
+                    start_2d = [(start[1] - origin[1]) / spacing[1], (start[2] - origin[2]) / spacing[2]]
+                    end_2d = [(end[1] - origin[1]) / spacing[1], (end[2] - origin[2]) / spacing[2]]
+                    ax.plot([start_2d[0], end_2d[0]], [start_2d[1], end_2d[1]], color=color, linewidth=1)
 
     plt.tight_layout()
     return fig
-
 
 # --- Parte 4: Interfaz principal ---
 
@@ -359,6 +465,8 @@ if uploaded_file:
             st.sidebar.markdown("#### Opciones avanzadas")
             sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
             invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
+            show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
+            show_needle_trajectories = st.sidebar.checkbox("Mostrar trayectorias de agujas", value=True)
 
             if sync_slices:
                 unified_idx = st.sidebar.slider(
@@ -429,20 +537,18 @@ if uploaded_file:
                  "Columna ósea (Spine Bone)", "Aire (Air)", "Grasa (Fat)", "Metal", "Personalizado"]
             )
 
-
             if window_option == "Default":
                 sample = dicom_files[0]
                 try:
                     dcm = pydicom.dcmread(sample, force=True)
                     window_width = getattr(dcm, 'WindowWidth', [400])[0] if hasattr(dcm, 'WindowWidth') else 400
                     window_center = getattr(dcm, 'WindowCenter', [40])[0] if hasattr(dcm, 'WindowCenter') else 40
-                    # Asegurar que los valores son números, ya que pueden ser múltiples o estar en formato especial
                     if isinstance(window_width, (list, tuple)):
                         window_width = window_width[0]
                     if isinstance(window_center, (list, tuple)):
                         window_center = window_center[0]
                 except Exception:
-                    window_width, window_center = 400, 40  # Valores por defecto si hay algún error
+                    window_width, window_center = 400, 40
             elif window_option == "Cerebro (Brain)":
                 window_width, window_center = 80, 40
             elif window_option == "Pulmón (Lung)":
@@ -471,8 +577,26 @@ if uploaded_file:
                 window_center = st.sidebar.number_input("Window Center (WL)", value=40)
                 window_width = st.sidebar.number_input("Window Width (WW)", value=400)
 
-            show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
             linewidth = st.sidebar.slider("Grosor líneas", 1, 8, 2)
+
+            # Parámetros de agujas y tándem
+            st.sidebar.markdown('<p class="sidebar-title">Configuración de Agujas</p>', unsafe_allow_html=True)
+            num_needles = st.sidebar.slider("Número de agujas", min_value=1, max_value=12, value=6, step=1)
+            tandem_diameter = st.sidebar.number_input("Diámetro del tándem (mm)", min_value=1.0, max_value=10.0, value=5.0, step=0.1)
+
+            # Calcular trayectorias de agujas
+            needle_entries, needle_trajectories = [], []
+            if structures:
+                # Usar los parámetros del cilindro para la simulación
+                diametro_mm = 30.0  # Valor por defecto para la simulación
+                longitud_mm = 50.0  # Valor por defecto para la simulación
+                needle_entries, needle_trajectories = compute_needle_trajectories(
+                    num_needles, diametro_mm, longitud_mm, structures, volume_info
+                )
+                if needle_trajectories:
+                    infeasible = [t for t in needle_trajectories if not t['feasible']]
+                    if infeasible:
+                        st.warning(f"⚠️ {len(infeasible)} trayectorias de agujas intersectan órganos sanos.")
 
             # Mostrar las imágenes en tres columnas
             col1, col2, col3 = st.columns(3)
@@ -480,10 +604,11 @@ if uploaded_file:
             with col1:
                 st.markdown("### Axial")
                 fig_axial = draw_slice(
-                    volume, axial_idx, 'axial', 
-                    structures if show_structures else None, 
-                    volume_info, 
+                    volume, axial_idx, 'axial',
+                    structures if show_structures else None,
+                    volume_info,
                     (window_width, window_center),
+                    needle_trajectories if show_needle_trajectories else None,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
@@ -496,6 +621,7 @@ if uploaded_file:
                     structures if show_structures else None,
                     volume_info,
                     (window_width, window_center),
+                    needle_trajectories if show_needle_trajectories else None,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
@@ -508,14 +634,16 @@ if uploaded_file:
                     structures if show_structures else None,
                     volume_info,
                     (window_width, window_center),
+                    needle_trajectories if show_needle_trajectories else None,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
                 st.pyplot(fig_sagittal)
 
+            # Generador de cilindro con agujas
             st.title("Generador de cilindro con punta tipo tampón (FreeCAD)")
-            st.write("Esta aplicación genera código para crear un cilindro con una punta redondeada en FreeCAD.")
-            
+            st.write("Esta aplicación genera código para crear un cilindro con una punta redondeada y orificios para agujas y tándem en FreeCAD.")
+
             # Parámetros en centímetros
             col1, col2 = st.columns(2)
             with col1:
@@ -526,20 +654,39 @@ if uploaded_file:
                 longitud_cm = st.slider("Longitud total (cm)", min_value=2.0, max_value=20.0, value=5.0, step=0.1)
                 st.write(f"Longitud seleccionada: {longitud_cm} cm ({longitud_cm*10} mm)")
             
-            # Opción para personalizar la proporción de la punta
             with st.expander("Opciones avanzadas"):
                 prop_punta = st.slider("Proporción de la punta (%)", min_value=10, max_value=50, value=20, step=5)
                 st.write(f"La punta ocupará el {prop_punta}% de la longitud total")
-            
+
             # Convertir a milímetros
             diametro_mm = round(diametro_cm * 10, 2)
             longitud_mm = round(longitud_cm * 10, 2)
-            
-            # Definir la longitud del cuerpo y la altura de la punta redondeada
             altura_punta = round(longitud_mm * prop_punta/100, 2)
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
-            
+            needle_diameter = 3.0  # Diámetro fijo de agujas
+
+            # Recalcular trayectorias con los parámetros finales del cilindro
+            if structures:
+                needle_entries, needle_trajectories = compute_needle_trajectories(
+                    num_needles, diametro_mm, longitud_mm, structures, volume_info
+                )
+
             # Generar código FreeCAD
+            needle_code = ""
+            needle_positions_str = ""
+            for i, (entry, traj) in enumerate(zip(needle_entries, needle_trajectories)):
+                feasible = traj['feasible']
+                x, y = entry[0], entry[1]
+                angle_adj = traj['angle_adjustment']
+                needle_positions_str += f"  - Aguja {i+1}: (x={x:.2f}, y={y:.2f}, z=0), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
+                if feasible:
+                    # Crear cilindro para la aguja
+                    needle_code += f"""
+# Aguja {i+1}
+needle_{i+1} = Part.makeCylinder({needle_diameter/2}, {longitud_mm*1.2}, App.Vector({x}, {y}, -{longitud_mm*0.1}), App.Vector(0, 0, 1))
+cylinder = cylinder.cut(needle_{i+1})
+"""
+            
             codigo = f"""import FreeCAD as App
 import Part
 
@@ -552,9 +699,12 @@ radio = diametro / 2
 altura_total = {longitud_mm}
 altura_cuerpo = {altura_cuerpo}
 altura_punta = {altura_punta}
+tandem_diameter = {tandem_diameter}
+needle_diameter = {needle_diameter}
+num_needles = {num_needles}
 
 # Crear cuerpo cilíndrico
-cuerpo = Part.makeCylinder(radio, altura_cuerpo)
+cylinder = Part.makeCylinder(radio, altura_cuerpo)
 
 # Crear punta redondeada (semiesfera)
 centro_semiesfera = App.Vector(0, 0, altura_cuerpo)
@@ -566,11 +716,18 @@ box.translate(App.Vector(-diametro, -diametro, -altura_cuerpo))
 punta = punta.cut(box)
 
 # Unir cilindro y punta
-objeto_final = cuerpo.fuse(punta)
+cylinder = cylinder.fuse(punta)
+
+# Crear orificio para el tándem
+tandem = Part.makeCylinder(tandem_diameter/2, altura_total*1.2, App.Vector(0, 0, -altura_total*0.1), App.Vector(0, 0, 1))
+cylinder = cylinder.cut(tandem)
+
+# Crear orificios para las agujas
+{needle_code}
 
 # Crear un objeto en el documento de FreeCAD
 objeto = doc.addObject("Part::Feature", "CilindroConPunta")
-objeto.Shape = objeto_final
+objeto.Shape = cylinder
 
 # Actualizar el documento
 doc.recompute()
@@ -587,19 +744,42 @@ print(f"- Diámetro: {{diametro}} mm")
 print(f"- Altura total: {{altura_total}} mm")
 print(f"- Altura del cuerpo: {{altura_cuerpo}} mm")
 print(f"- Altura de la punta: {{altura_punta}} mm")
+print(f"- Diámetro del tándem: {{tandem_diameter}} mm")
+print(f"- Número de agujas: {{num_needles}}")
+print("Posiciones de agujas:")
+{needle_positions_str}
 """
-            
             # Mostrar el código
             st.subheader("Código FreeCAD generado")
             st.code(codigo, language="python")
                     
-            # Botón de descarga
+            # Botón de descarga para el código FreeCAD
             st.download_button(
                 label="Descargar código FreeCAD (.py)",
                 data=codigo,
                 file_name="cilindro_punta_redondeada.py",
                 mime="text/x-python"
             )
-            
+
+            # Generar y descargar reporte de agujas
+            report = f"""Reporte de Agujas
+================
+Diámetro del cilindro: {diametro_mm} mm
+Longitud total: {longitud_mm} mm
+Diámetro del tándem: {tandem_diameter} mm
+Número de agujas: {num_needles}
+Diámetro de agujas: {needle_diameter} mm
+
+Posiciones y estado de las agujas:
+{needle_positions_str}
+"""
+            st.download_button(
+                label="Descargar reporte de agujas (.txt)",
+                data=report,
+                file_name="reporte_agujas.txt",
+                mime="text/plain"
+            )
+
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
+
