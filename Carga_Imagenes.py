@@ -819,6 +819,7 @@ if uploaded_file:
                 angle_adj = traj['angle_adjustment']
                 needle_positions_str += f"  - Aguja {i+1}: (x={x:.2f}, y={y:.2f}, z=0), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
                 if feasible:
+                    # Crear cilindro para la aguja
                     needle_code += f"""
 # Aguja {i+1}
 needle_{i+1} = Part.makeCylinder({needle_diameter/2}, {longitud_mm*1.2}, App.Vector({x}, {y}, -{longitud_mm*0.1}), App.Vector(0, 0, 1))
