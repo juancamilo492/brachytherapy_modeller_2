@@ -10,7 +10,6 @@ import SimpleITK as sitk
 import pydicom
 import matplotlib.patches as patches
 import plotly.graph_objects as go
-import uuid
 
 # Configuración de Streamlit
 st.set_page_config(page_title="Brachyanalysis", layout="wide")
@@ -312,16 +311,16 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
                 'angle_adjustment': 0
             })
 
-    return needle_entries, needle_trajectories
+    return needle_entries, needle_trajectories, ctv_centroid
 
-def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle_trajectories=None, linewidth=2, show_names=True, invert_colors=False):
-    """Dibuja un corte con contornos y trayectorias de agujas"""
+def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle_trajectories=None, ctv_centroid=None, cylinder_diameter=None, cylinder_length=None, show_cylinder_2d=False, linewidth=2, show_names=True, invert_colors=False):
+    """Dibuja un corte con contornos, trayectorias de agujas y cilindro"""
     fig, ax = plt.subplots(figsize=(8, 8))
     plt.axis('off')
 
     if plane == 'axial':
         img = volume[slice_idx, :, :]
-   楚elif plane == 'coronal':
+    elif plane == 'coronal':
         img = volume[:, slice_idx, :]
     elif plane == 'sagittal':
         img = volume[:, :, slice_idx]
@@ -368,16 +367,15 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                     tolerance = spacing[2] * 2.0
 
                     if (min_z - tolerance <= current_slice_pos <= max_z + tolerance or
-                        abs(contour['z'] - current_slice_pos) <= tolerance
+                        abs(contour['z'] - current_slice_pos) <= tolerance):
+                        pixel_points = np.zeros((raw_points.shape[0], 2))
+                        pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]
+                        pixel_points[:, 1] = (raw_points[:, 1] - origin[1]) / spacing[1]
 
-                    pixel_points = np.zeros((raw_points.shape[0], 2))
-                    pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]
-                    pixel_points[:, 1] = (raw_points[:, 1] - origin[1]) / spacing[1]
-
-                    if len(pixel_points) >= 3:
-                        polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
-                        ax.add_patch(polygon)
-                        contour_drawn += 1
+                        if len(pixel_points) >= 3:
+                            polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
+                            ax.add_patch(polygon)
+                            contour_drawn += 1
 
                 elif plane == 'coronal':
                     mask = np.abs(raw_points[:, 1] - current_slice_pos) < spacing[1]
@@ -415,16 +413,13 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
             end_voxel = patient_to_voxel(np.array([end]), volume_info)[0]
 
             if plane == 'axial':
-                # Verificar si la trayectoria cruza el plano z
                 z_voxel = slice_idx
                 if (start_voxel[2] <= z_voxel <= end_voxel[2] or end_voxel[2] <= z_voxel <= start_voxel[2]):
-                    # Interpolar para encontrar el punto de intersección
                     t = (z_voxel - start_voxel[2]) / (end_voxel[2] - start_voxel[2] + 1e-10)
                     x = start_voxel[0] + t * (end_voxel[0] - start_voxel[0])
                     y = start_voxel[1] + t * (end_voxel[1] - start_voxel[1])
                     ax.plot([x], [y], marker='o', color=color, markersize=4)
             elif plane == 'coronal':
-                # Verificar si la trayectoria cruza el plano y
                 y_voxel = slice_idx
                 if (start_voxel[1] <= y_voxel <= end_voxel[1] or end_voxel[1] <= y_voxel <= start_voxel[1]):
                     t = (y_voxel - start_voxel[1]) / (end_voxel[1] - start_voxel[1] + 1e-10)
@@ -432,7 +427,6 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                     z = start_voxel[2] + t * (end_voxel[2] - start_voxel[2])
                     ax.plot([x], [z], marker='o', color=color, markersize=4)
             elif plane == 'sagittal':
-                # Verificar si la trayectoria cruza el plano x
                 x_voxel = slice_idx
                 if (start_voxel[0] <= x_voxel <= end_voxel[0] or end_voxel[0] <= x_voxel <= start_voxel[0]):
                     t = (x_voxel - start_voxel[0]) / (end_voxel[0] - start_voxel[0] + 1e-10)
@@ -440,11 +434,44 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                     z = start_voxel[2] + t * (end_voxel[2] - start_voxel[2])
                     ax.plot([y], [z], marker='o', color=color, markersize=4)
 
+    if show_cylinder_2d and ctv_centroid is not None and cylinder_diameter is not None and cylinder_length is not None:
+        cylinder_radius = cylinder_diameter / 2
+        z_base = ctv_centroid[2] - cylinder_length
+        z_top = ctv_centroid[2]
+
+        if plane == 'axial':
+            if z_base <= current_slice_pos <= z_top:
+                center_x = (ctv_centroid[0] - origin[0]) / spacing[0]
+                center_y = (ctv_centroid[1] - origin[1]) / spacing[1]
+                radius_pixel = cylinder_radius / spacing[0]  # Asumiendo spacing[0] == spacing[1]
+                circle = patches.Circle((center_x, center_y), radius_pixel, fill=False, edgecolor='blue', linewidth=linewidth, linestyle='--')
+                ax.add_patch(circle)
+        elif plane == 'coronal':
+            if abs(ctv_centroid[1] - current_slice_pos) <= cylinder_radius:
+                x_min = (ctv_centroid[0] - cylinder_radius - origin[0]) / spacing[0]
+                x_max = (ctv_centroid[0] + cylinder_radius - origin[0]) / spacing[0]
+                z_min = (z_base - origin[2]) / spacing[2]
+                z_max = (z_top - origin[2]) / spacing[2]
+                width = x_max - x_min
+                height = z_max - z_min
+                rect = patches.Rectangle((x_min, z_min), width, height, fill=False, edgecolor='blue', linewidth=linewidth, linestyle='--')
+                ax.add_patch(rect)
+        elif plane == 'sagittal':
+            if abs(ctv_centroid[0] - current_slice_pos) <= cylinder_radius:
+                y_min = (ctv_centroid[1] - cylinder_radius - origin[1]) / spacing[1]
+                y_max = (ctv_centroid[1] + cylinder_radius - origin[1]) / spacing[1]
+                z_min = (z_base - origin[2]) / spacing[2]
+                z_max = (z_top - origin[2]) / spacing[2]
+                width = y_max - y_min
+                height = z_max - z_min
+                rect = patches.Rectangle((y_min, z_min), width, height, fill=False, edgecolor='blue', linewidth=linewidth, linestyle='--')
+                ax.add_patch(rect)
+
     plt.tight_layout()
     return fig
 
-def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder_diameter, cylinder_length):
-    """Crea una visualización 3D de estructuras y trayectorias de agujas usando Plotly"""
+def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder_diameter, cylinder_length, ctv_centroid):
+    """Crea una visualización 3D de estructuras, trayectorias de agujas y cilindro usando Plotly"""
     fig = go.Figure()
 
     # Visualizar estructuras (contornos)
@@ -474,7 +501,7 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
             start = traj['entry']
             end = traj['end']
             color = 'green' if traj['feasible'] else 'red'
-            fig.add_trace(go.Scatter3d(
+            fig.add_trace(go -of go.Scatter3d(
                 x=[start[0], end[0]],
                 y=[start[1], end[1]],
                 z=[start[2], end[2]],
@@ -485,33 +512,24 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
 
     # Visualizar el cilindro como una malla de alambre
     cylinder_radius = cylinder_diameter / 2
-    # Encontrar el centroide de CTV para alinear el cilindro
-    ctv_structure = None
-    for name, struct in structures.items():
-        if name.startswith("CTV_"):
-            ctv_structure = struct
-            break
-    if ctv_structure:
-        all_points = np.concatenate([c['points'] for c in ctv_structure['contours']])
-        ctv_centroid = np.mean(all_points, axis=0)
-        z_base = ctv_centroid[2] - cylinder_length
-        z_top = ctv_centroid[2]
+    z_base = ctv_centroid[2] - cylinder_length
+    z_top = ctv_centroid[2]
 
-        # Crear puntos para el cilindro
-        theta = np.linspace(0, 2*np.pi, 20)
-        z = np.linspace(z_base, z_top, 10)
-        theta, z = np.meshgrid(theta, z)
-        x = cylinder_radius * np.cos(theta) + ctv_centroid[0]
-        y = cylinder_radius * np.sin(theta) + ctv_centroid[1]
-        fig.add-trace(go.Mesh3d(
-            x=x.flatten(),
-            y=y.flatten(),
-            z=z.flatten(),
-            opacity=0.2,
-            color='blue',
-            name='Cylinder',
-            showlegend=True
-        ))
+    # Crear puntos para el cilindro
+    theta = np.linspace(0, 2*np.pi, 20)
+    z = np.linspace(z_base, z_top, 10)
+    theta, z = np.meshgrid(theta, z)
+    x = cylinder_radius * np.cos(theta) + ctv_centroid[0]
+    y = cylinder_radius * np.sin(theta) + ctv_centroid[1]
+    fig.add_trace(go.Mesh3d(
+        x=x.flatten(),
+        y=y.flatten(),
+        z=z.flatten(),
+        opacity=0.2,
+        color='blue',
+        name='Cylinder',
+        showlegend=True
+    ))
 
     # Configurar el diseño
     fig.update_layout(
@@ -560,11 +578,13 @@ if uploaded_file:
 
             st.sidebar.markdown("#### Selección de cortes")
             st.sidebar.markdown("#### Opciones avanzadas")
+            st.sidebar.markdown("**Visualización 3D disponible**")
+            show_3d_visualization = st.sidebar.checkbox("Mostrar visualización 3D", value=False)
             sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
             invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
             show_structures = st.sidebar.checkbox("Mostrar estructuras", value=True)
             show_needle_trajectories = st.sidebar.checkbox("Mostrar trayectorias de agujas", value=True)
-            show_3d_visualization = st.sidebar.checkbox("Mostrar visualización 3D", value=False)
+            show_cylinder_2d = st.sidebar.checkbox("Mostrar cilindro en 2D", value=True)
 
             if sync_slices:
                 unified_idx = st.sidebar.slider(
@@ -686,12 +706,11 @@ if uploaded_file:
             ctv_offset_z = st.sidebar.number_input("Offset CTV Z (mm)", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
 
             # Calcular trayectorias de agujas
-            needle_entries, needle_trajectories = [], []
+            needle_entries, needle_trajectories, ctv_centroid = [], [], None
             if structures:
-                # Usar los parámetros del cilindro para la simulación
-                diametro_mm = 30.0  # Valor por defecto para la simulación
-                longitud_mm = 50.0  # Valor por defecto para la simulación
-                needle_entries, needle_trajectories = compute_needle_trajectories(
+                diametro_mm = 30.0
+                longitud_mm = 50.0
+                needle_entries, needle_trajectories, ctv_centroid = compute_needle_trajectories(
                     num_needles, diametro_mm, longitud_mm, structures, volume_info,
                     ctv_centroid_offset=[ctv_offset_x, ctv_offset_y, ctv_offset_z]
                 )
@@ -711,6 +730,10 @@ if uploaded_file:
                     volume_info,
                     (window_width, window_center),
                     needle_trajectories if show_needle_trajectories else None,
+                    ctv_centroid,
+                    diametro_mm,
+                    longitud_mm,
+                    show_cylinder_2d,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
@@ -724,6 +747,10 @@ if uploaded_file:
                     volume_info,
                     (window_width, window_center),
                     needle_trajectories if show_needle_trajectories else None,
+                    ctv_centroid,
+                    diametro_mm,
+                    longitud_mm,
+                    show_cylinder_2d,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
@@ -737,12 +764,16 @@ if uploaded_file:
                     volume_info,
                     (window_width, window_center),
                     needle_trajectories if show_needle_trajectories else None,
+                    ctv_centroid,
+                    diametro_mm,
+                    longitud_mm,
+                    show_cylinder_2d,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
                 st.pyplot(fig_sagittal)
 
-            # Visualización 3D
+            # Visualización 3D en la interfaz principal
             if show_3d_visualization and structures:
                 st.markdown("### Visualización 3D")
                 fig_3d = draw_3d_visualization(
@@ -750,7 +781,8 @@ if uploaded_file:
                     needle_trajectories,
                     volume_info,
                     diametro_mm,
-                    longitud_mm
+                    longitud_mm,
+                    ctv_centroid
                 )
                 st.plotly_chart(fig_3d, use_container_width=True)
 
@@ -777,11 +809,11 @@ if uploaded_file:
             longitud_mm = round(longitud_cm * 10, 2)
             altura_punta = round(longitud_mm * prop_punta/100, 2)
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
-            needle_diameter = 3.0  # Diámetro fijo de agujas
+            needle_diameter = 3.0
 
-            # Recalcular trayectorias con los parámetros finales del cilindro
+            # Recalcular trayectorias con los nieve parámetros del cilindro
             if structures:
-                needle_entries, needle_trajectories = compute_needle_trajectories(
+                needle_entries, needle_trajectories, ctv_centroid = compute_needle_trajectories(
                     num_needles, diametro_mm, longitud_mm, structures, volume_info,
                     ctv_centroid_offset=[ctv_offset_x, ctv_offset_y, ctv_offset_z]
                 )
@@ -795,7 +827,6 @@ if uploaded_file:
                 angle_adj = traj['angle_adjustment']
                 needle_positions_str += f"  - Aguja {i+1}: (x={x:.2f}, y={y:.2f}, z=0), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
                 if feasible:
-                    # Crear cilindro para la aguja
                     needle_code += f"""
 # Aguja {i+1}
 needle_{i+1} = Part.makeCylinder({needle_diameter/2}, {longitud_mm*1.2}, App.Vector({x}, {y}, -{longitud_mm*0.1}), App.Vector(0, 0, 1))
