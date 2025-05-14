@@ -1,3 +1,4 @@
+```python
 import os
 import io
 import zipfile
@@ -242,16 +243,16 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
 
     # Calcular centroide de CTV
     all_points = np.concatenate([c['points'] for c in ctv_structure['contours']])
-    ctv_cent Jameson = np.mean(all_points, axis=0) + np.array(ctv_centroid_offset)
+    ctv_centroid = np.mean(all_points, axis=0) + np.array(ctv_centroid_offset)
 
     # Generar posiciones de entrada de agujas en la base del cilindro, alineadas con CTV
     needle_entries = []
     needle_trajectories = []
     angles = np.linspace(0, 2 * np.pi, num_needles, endpoint=False)
     for angle in angles:
-        x = needle_ring_radius * np.cos(angle) + ctv_cent Jameson[0]
-        y = needle_ring_radius * np.sin(angle) + ctv_cent Jameson[1]
-        z = ctv_cent Jameson[2] - cylinder_length  # Base del cilindro por debajo del CTV
+        x = needle_ring_radius * np.cos(angle) + ctv_centroid[0]
+        y = needle_ring_radius * np.sin(angle) + ctv_centroid[1]
+        z = ctv_centroid[2] - cylinder_length  # Base del cilindro por debajo del CTV
         needle_entries.append([x, y, z])
 
     # Calcular trayectorias
@@ -261,7 +262,7 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
 
     for entry in needle_entries:
         entry = np.array(entry)
-        target = ctv_cent Jameson
+        target = ctv_centroid
         feasible = True
         best_trajectory = None
         best_angle = 0
@@ -311,7 +312,7 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
                 'angle_adjustment': 0
             })
 
-    return needle_entries, needle_trajectories, ctv_cent Jameson
+    return needle_entries, needle_trajectories, ctv_centroid
 
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle_trajectories=None, ctv_centroid=None, cylinder_diameter=None, cylinder_length=None, show_cylinder_2d=False, linewidth=2, show_names=True, invert_colors=False):
     """Dibuja un corte con contornos, trayectorias de agujas y cilindro"""
@@ -920,3 +921,20 @@ Posiciones y estado de las agujas:
 
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
+```
+
+### Key Changes
+1. **Fixed Typo in `compute_needle_trajectories`**:
+   - Replaced `ctv_cent Jameson` with `ctv_centroid` in the following lines:
+     ```python
+     ctv_centroid = np.mean(all_points, axis=0) + np.array(ctv_centroid_offset)
+     x = needle_ring_radius * np.cos(angle) + ctv_centroid[0]
+     y = needle_ring_radius * np.sin(angle) + ctv_centroid[1]
+     z = ctv_centroid[2] - cylinder_length
+     target = ctv_centroid
+     ```
+   - This corrects the syntax error and ensures the CTV centroid is properly calculated and used.
+
+2. **Preserved All Other Functionality**:
+   - The 3D visualization remains intact:
+     - Needle trajectories: `width=8`, green
