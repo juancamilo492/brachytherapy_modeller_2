@@ -321,7 +321,7 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
 
     if plane == 'axial':
         img = volume[slice_idx, :, :]
-    elif plane == 'coronal':
+   楚elif plane == 'coronal':
         img = volume[:, slice_idx, :]
     elif plane == 'sagittal':
         img = volume[:, :, slice_idx]
@@ -368,15 +368,16 @@ def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle
                     tolerance = spacing[2] * 2.0
 
                     if (min_z - tolerance <= current_slice_pos <= max_z + tolerance or
-                        abs(contour['z'] - current_slice_pos) <= tolerance):
-                        pixel_points = np.zeros((raw_points.shape[0], 2))
-                        pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]
-                        pixel_points[:, 1] = (raw_points[:, 1] - origin[1]) / spacing[1]
+                        abs(contour['z'] - current_slice_pos) <= tolerance
 
-                        if len(pixel_points) >= 3:
-                            polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
-                            ax.add_patch(polygon)
-                            contour_drawn += 1
+                    pixel_points = np.zeros((raw_points.shape[0], 2))
+                    pixel_points[:, 0] = (raw_points[:, 0] - origin[0]) / spacing[0]
+                    pixel_points[:, 1] = (raw_points[:, 1] - origin[1]) / spacing[1]
+
+                    if len(pixel_points) >= 3:
+                        polygon = patches.Polygon(pixel_points, closed=True, fill=False, edgecolor=color, linewidth=linewidth)
+                        ax.add_patch(polygon)
+                        contour_drawn += 1
 
                 elif plane == 'coronal':
                     mask = np.abs(raw_points[:, 1] - current_slice_pos) < spacing[1]
@@ -502,7 +503,7 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
         theta, z = np.meshgrid(theta, z)
         x = cylinder_radius * np.cos(theta) + ctv_centroid[0]
         y = cylinder_radius * np.sin(theta) + ctv_centroid[1]
-        fig.add_trace(go.Mesh3d(
+        fig.add-trace(go.Mesh3d(
             x=x.flatten(),
             y=y.flatten(),
             z=z.flatten(),
@@ -788,28 +789,11 @@ if uploaded_file:
             # Generar código FreeCAD
             needle_code = ""
             needle_positions_str = ""
-
-            # Ajustar posiciones de las agujas al sistema de coordenadas del cilindro
-            ctv_structure = None
-            for name, struct in structures.items():
-                if name.startswith("CTV_"):
-                    ctv_structure = struct
-                    break
-
-            if ctv_structure:
-                all_points = np.concatenate([c['points'] for c in ctv_structure['contours']])
-                ctv_centroid = np.mean(all_points, axis=0)
-            else:
-                ctv_centroid = np.array([0, 0, 0])  # Fallback si no hay CTV
-
             for i, (entry, traj) in enumerate(zip(needle_entries, needle_trajectories)):
                 feasible = traj['feasible']
-                # Ajustar las coordenadas de la aguja para que sean relativas al centro del cilindro
-                x = entry[0] - ctv_centroid[0]  # Centrar en el eje X
-                y = entry[1] - ctv_centroid[1]  # Centrar en el eje Y
-                z = 0  # La base del cilindro está en z=0 en FreeCAD
+                x, y = entry[0], entry[1]
                 angle_adj = traj['angle_adjustment']
-                needle_positions_str += f"  - Aguja {i+1}: (x={x:.2f}, y={y:.2f}, z={z:.2f}), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
+                needle_positions_str += f"  - Aguja {i+1}: (x={x:.2f}, y={y:.2f}, z=0), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
                 if feasible:
                     # Crear cilindro para la aguja
                     needle_code += f"""
@@ -817,12 +801,12 @@ if uploaded_file:
 needle_{i+1} = Part.makeCylinder({needle_diameter/2}, {longitud_mm*1.2}, App.Vector({x}, {y}, -{longitud_mm*0.1}), App.Vector(0, 0, 1))
 cylinder = cylinder.cut(needle_{i+1})
 """
-
+            
             codigo = f"""import FreeCAD as App
 import Part
 
 # Crear un nuevo documento
-doc = App.newDocument("CilindroConPunta")
+doc = App.newDocument()
 
 # Parámetros
 diametro = {diametro_mm}
@@ -835,14 +819,15 @@ needle_diameter = {needle_diameter}
 num_needles = {num_needles}
 
 # Crear cuerpo cilíndrico
-cylinder = Part.makeCylinder(radio, altura_cuerpo, App.Vector(0, 0, 0), App.Vector(0, 0, 1))
+cylinder = Part.makeCylinder(radio, altura_cuerpo)
 
 # Crear punta redondeada (semiesfera)
 centro_semiesfera = App.Vector(0, 0, altura_cuerpo)
 punta = Part.makeSphere(radio, centro_semiesfera)
 
 # Cortar la mitad inferior de la esfera
-box = Part.makeBox(diametro*2, diametro*2, altura_cuerpo, App.Vector(-diametro, -diametro, -altura_cuerpo))
+box = Part.makeBox(diametro*2, diametro*2, altura_cuerpo)
+box.translate(App.Vector(-diametro, -diametro, -altura_cuerpo))
 punta = punta.cut(box)
 
 # Unir cilindro y punta
@@ -862,24 +847,22 @@ objeto.Shape = cylinder
 # Actualizar el documento
 doc.recompute()
 
-# Configurar la vista - Solo si estamos en la interfaz gráfica
-try:
+# Vista - Solo si estamos en la interfaz gráfica
+if App.GuiUp:
     import FreeCADGui as Gui
+    App.activeDocument().recompute()
     Gui.activeDocument().activeView().viewAxonometric()
     Gui.SendMsgToActiveView("ViewFit")
-except:
-    pass
 
-# Información de salida
 print("Objeto creado con éxito con las siguientes dimensiones:")
-print(f"- Diámetro: {diametro_mm} mm")
-print(f"- Altura total: {altura_total} mm")
-print(f"- Altura del cuerpo: {altura_cuerpo} mm")
-print(f"- Altura de la punta: {altura_punta} mm")
-print(f"- Diámetro del tándem: {tandem_diameter} mm")
-print(f"- Número de agujas: {num_needles}")
-print("Posiciones de agujas (relativas al centro del cilindro):")
-print('''{needle_positions_str}''')
+print(f"- Diámetro: {{diametro}} mm")
+print(f"- Altura total: {{altura_total}} mm")
+print(f"- Altura del cuerpo: {{altura_cuerpo}} mm")
+print(f"- Altura de la punta: {{altura_punta}} mm")
+print(f"- Diámetro del tándem: {{tandem_diameter}} mm")
+print(f"- Número de agujas: {{num_needles}}")
+print("Posiciones de agujas:")
+{needle_positions_str}
 """
             # Mostrar el código
             st.subheader("Código FreeCAD generado")
