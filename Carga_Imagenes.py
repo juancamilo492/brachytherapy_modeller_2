@@ -922,19 +922,3 @@ Posiciones y estado de las agujas:
     else:
         st.warning("No se encontraron imágenes DICOM en el ZIP.")
 ```
-
-### Key Changes
-1. **Fixed Typo in `compute_needle_trajectories`**:
-   - Replaced `ctv_cent Jameson` with `ctv_centroid` in the following lines:
-     ```python
-     ctv_centroid = np.mean(all_points, axis=0) + np.array(ctv_centroid_offset)
-     x = needle_ring_radius * np.cos(angle) + ctv_centroid[0]
-     y = needle_ring_radius * np.sin(angle) + ctv_centroid[1]
-     z = ctv_centroid[2] - cylinder_length
-     target = ctv_centroid
-     ```
-   - This corrects the syntax error and ensures the CTV centroid is properly calculated and used.
-
-2. **Preserved All Other Functionality**:
-   - The 3D visualization remains intact:
-     - Needle trajectories: `width=8`, green
