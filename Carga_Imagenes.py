@@ -10,7 +10,6 @@ import SimpleITK as sitk
 import pydicom
 import matplotlib.patches as patches
 import plotly.graph_objects as go
-import math
 
 # Configuración de Streamlit
 st.set_page_config(page_title="Brachyanalysis", layout="wide")
@@ -812,16 +811,23 @@ if uploaded_file:
                 st.plotly_chart(fig_3d, use_container_width=True)
 
             # Generar código FreeCAD
+            needle_code = ""
             needle_positions_str = ""
-            for i, traj in enumerate(needle_trajectories):
+            for i, (entry, traj) in enumerate(zip(needle_entries, needle_trajectories)):
                 feasible = traj['feasible']
-                entry = traj['entry']
+                x, y = entry[0], entry[1]
                 angle_adj = traj['angle_adjustment']
-                needle_positions_str += f"  - Aguja {i+1}: (x={entry[0]:.2f}, y={entry[1]:.2f}, z={entry[2]:.2f}), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
-
+                needle_positions_str += f"  - Aguja {i+1}: (x={x:.2f}, y={y:.2f}, z=0), Ángulo ajuste: {angle_adj}°, {'Válida' if feasible else 'Inválida'}\n"
+                if feasible:
+                    # Crear cilindro para la aguja
+                    needle_code += f"""
+# Aguja {i+1}
+needle_{i+1} = Part.makeCylinder({needle_diameter/2}, {longitud_mm*1.2}, App.Vector({x}, {y}, -{longitud_mm*0.1}), App.Vector(0, 0, 1))
+cylinder = cylinder.cut(needle_{i+1})
+"""
+            
             codigo = f"""import FreeCAD as App
 import Part
-import math
 
 # Crear un nuevo documento
 doc = App.newDocument()
@@ -835,10 +841,9 @@ altura_punta = {altura_punta}
 tandem_diameter = {tandem_diameter}
 needle_diameter = {needle_diameter}
 num_needles = {num_needles}
-ctv_centroid = App.Vector({ctv_centroid[0] if ctv_centroid is not None else 0}, {ctv_centroid[1] if ctv_centroid is not None else 0}, {ctv_centroid[2] if ctv_centroid is not None else 0})
 
 # Crear cuerpo cilíndrico
-cylinder = Part.makeCylinder(radio, altura_cuerpo, App.Vector(0, 0, 0), App.Vector(0, 0, 1))
+cylinder = Part.makeCylinder(radio, altura_cuerpo)
 
 # Crear punta redondeada (semiesfera)
 centro_semiesfera = App.Vector(0, 0, altura_cuerpo)
@@ -856,37 +861,8 @@ cylinder = cylinder.fuse(punta)
 tandem = Part.makeCylinder(tandem_diameter/2, altura_total*1.2, App.Vector(0, 0, -altura_total*0.1), App.Vector(0, 0, 1))
 cylinder = cylinder.cut(tandem)
 
-# Crear orificios para las agujas alineados con las trayectorias
-needle_positions_str = ""
-needle_trajectories = {needle_trajectories}
-for i, traj in enumerate(needle_trajectories):
-    entry = App.Vector(traj['entry'][0], traj['entry'][1], traj['entry'][2])
-    end = App.Vector(traj['end'][0], traj['end'][1], traj['end'][2])
-    feasible = traj['feasible']
-    angle_adj = traj['angle_adjustment']
-    needle_positions_str += f"  - Aguja {{i+1}}: (x={{entry.x:.2f}}, y={{entry.y:.2f}}, z={{entry.z:.2f}}), Ángulo ajuste: {{angle_adj}}°, {{'Válida' if feasible else 'Inválida'}}\n"
-    
-    if feasible:
-        # Calcular vector de dirección
-        dir_vec = end - entry
-        length = dir_vec.Length
-        if length > 0:
-            dir_vec = dir_vec / length  # Normalizar
-            # Crear cilindro para la aguja
-            needle = Part.makeCylinder(needle_diameter/2, altura_total*1.2, App.Vector(0, 0, -altura_total*0.1), App.Vector(0, 0, 1))
-            # Rotar el cilindro para alinearlo con la dirección
-            z_axis = App.Vector(0, 0, 1)
-            rot_axis = z_axis.cross(dir_vec)
-            if rot_axis.Length > 1e-6:  # Evitar división por cero
-                rot_axis = rot_axis / rot_axis.Length
-                angle = math.acos(z_axis.dot(dir_vec)) * 180 / math.pi
-                needle.rotate(App.Vector(0, 0, 0), rot_axis, angle)
-            # Trasladar el cilindro al punto de entrada
-            needle.translate(entry - ctv_centroid + App.Vector(0, 0, -altura_total*0.1))
-            cylinder = cylinder.cut(needle)
-
-# Trasladar el cilindro completo para alinear su base con el centroide del CTV
-cylinder.translate(ctv_centroid + App.Vector(0, 0, -altura_total))
+# Crear orificios para las agujas
+{needle_code}
 
 # Crear un objeto en el documento de FreeCAD
 objeto = doc.addObject("Part::Feature", "CilindroConPunta")
@@ -903,16 +879,15 @@ if App.GuiUp:
     Gui.SendMsgToActiveView("ViewFit")
 
 print("Objeto creado con éxito con las siguientes dimensiones:")
-print(f"- Diámetro: {diametro} mm")
-print(f"- Altura total: {altura_total} mm")
-print(f"- Altura del cuerpo: {altura_cuerpo} mm")
-print(f"- Altura de la punta: {altura_punta} mm")
-print(f"- Diámetro del tándem: {tandem_diameter} mm")
-print(f"- Número de agujas: {num_needles}")
+print(f"- Diámetro: {{diametro}} mm")
+print(f"- Altura total: {{altura_total}} mm")
+print(f"- Altura del cuerpo: {{altura_cuerpo}} mm")
+print(f"- Altura de la punta: {{altura_punta}} mm")
+print(f"- Diámetro del tándem: {{tandem_diameter}} mm")
+print(f"- Número de agujas: {{num_needles}}")
 print("Posiciones de agujas:")
-print(needle_positions_str)
+{needle_positions_str}
 """
-
             # Mostrar el código
             st.subheader("Código FreeCAD generado")
             st.code(codigo, language="python")
