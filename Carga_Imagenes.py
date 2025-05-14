@@ -242,16 +242,16 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
 
     # Calcular centroide de CTV
     all_points = np.concatenate([c['points'] for c in ctv_structure['contours']])
-    ctv_centroid = np.mean(all_points, axis=0) + np.array(ctv_centroid_offset)
+    ctv_cent Jameson = np.mean(all_points, axis=0) + np.array(ctv_centroid_offset)
 
     # Generar posiciones de entrada de agujas en la base del cilindro, alineadas con CTV
     needle_entries = []
     needle_trajectories = []
     angles = np.linspace(0, 2 * np.pi, num_needles, endpoint=False)
     for angle in angles:
-        x = needle_ring_radius * np.cos(angle) + ctv_centroid[0]
-        y = needle_ring_radius * np.sin(angle) + ctv_centroid[1]
-        z = ctv_centroid[2] - cylinder_length  # Base del cilindro por debajo del CTV
+        x = needle_ring_radius * np.cos(angle) + ctv_cent Jameson[0]
+        y = needle_ring_radius * np.sin(angle) + ctv_cent Jameson[1]
+        z = ctv_cent Jameson[2] - cylinder_length  # Base del cilindro por debajo del CTV
         needle_entries.append([x, y, z])
 
     # Calcular trayectorias
@@ -261,7 +261,7 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
 
     for entry in needle_entries:
         entry = np.array(entry)
-        target = ctv_centroid
+        target = ctv_cent Jameson
         feasible = True
         best_trajectory = None
         best_angle = 0
@@ -311,7 +311,7 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
                 'angle_adjustment': 0
             })
 
-    return needle_entries, needle_trajectories, ctv_centroid
+    return needle_entries, needle_trajectories, ctv_cent Jameson
 
 def draw_slice(volume, slice_idx, plane, structures, volume_info, window, needle_trajectories=None, ctv_centroid=None, cylinder_diameter=None, cylinder_length=None, show_cylinder_2d=False, linewidth=2, show_names=True, invert_colors=False):
     """Dibuja un corte con contornos, trayectorias de agujas y cilindro"""
@@ -479,6 +479,7 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
         for name, struct in structures.items():
             color = struct['color']
             rgb_color = f"rgb({int(color[0]*255)}, {int(color[1]*255)}, {int(color[2]*255)})"
+            opacity = 0.3 if name == "BODY" else 0.6
             for contour in struct['contours']:
                 pts = contour['points']
                 # Submuestrear para rendimiento
@@ -492,7 +493,7 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
                     mode='lines',
                     line=dict(color=rgb_color, width=2),
                     name=name,
-                    opacity=0.6
+                    opacity=opacity
                 ))
 
     # Visualizar trayectorias de agujas
@@ -506,11 +507,11 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
                 y=[start[1], end[1]],
                 z=[start[2], end[2]],
                 mode='lines',
-                line=dict(color=color, width=4),
+                line=dict(color=color, width=8),
                 name=f"Needle {i+1} ({'Feasible' if traj['feasible'] else 'Infeasible'})"
             ))
 
-    # Visualizar el cilindro como una malla de alambre
+    # Visualizar el cilindro como una malla semi-transparente
     cylinder_radius = cylinder_diameter / 2
     z_base = ctv_centroid[2] - cylinder_length
     z_top = ctv_centroid[2]
@@ -525,8 +526,8 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
         x=x.flatten(),
         y=y.flatten(),
         z=z.flatten(),
-        opacity=0.2,
-        color='blue',
+        opacity=0.4,
+        color='#4682B4',  # SteelBlue (grisáceo-azul)
         name='Cylinder',
         showlegend=True
     ))
@@ -578,7 +579,7 @@ if uploaded_file:
 
             st.sidebar.markdown("#### Selección de cortes")
             st.sidebar.markdown("#### Opciones avanzadas")
-            st.sidebar.markdown("**Visualización 3D disponible**")
+            st.sidebar.markdown("**Visualización 3D (cilindro y trayectorias)**")
             show_3d_visualization = st.sidebar.checkbox("Mostrar visualización 3D", value=False)
             sync_slices = st.sidebar.checkbox("Sincronizar cortes", value=True)
             invert_colors = st.sidebar.checkbox("Invertir colores (Negativo)", value=False)
@@ -705,11 +706,34 @@ if uploaded_file:
             ctv_offset_y = st.sidebar.number_input("Offset CTV Y (mm)", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
             ctv_offset_z = st.sidebar.number_input("Offset CTV Z (mm)", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
 
+            # Generador de cilindro con agujas
+            st.title("Generador de cilindro con punta tipo tampón (FreeCAD)")
+            st.write("Esta aplicación genera código para crear un cilindro con una punta redondeada y orificios para agujas y tándem en FreeCAD.")
+
+            # Parámetros en centímetros
+            col1, col2 = st.columns(2)
+            with col1:
+                diametro_cm = st.slider("Diámetro (cm)", min_value=1.0, max_value=12.0, value=3.0, step=0.1)
+                st.write(f"Diámetro seleccionado: {diametro_cm} cm ({diametro_cm*10} mm)")
+            
+            with col2:
+                longitud_cm = st.slider("Longitud total (cm)", min_value=2.0, max_value=20.0, value=5.0, step=0.1)
+                st.write(f"Longitud seleccionada: {longitud_cm} cm ({longitud_cm*10} mm)")
+            
+            with st.expander("Opciones avanzadas"):
+                prop_punta = st.slider("Proporción de la punta (%)", min_value=10, max_value=50, value=20, step=5)
+                st.write(f"La punta ocupará el {prop_punta}% de la longitud total")
+
+            # Convertir a milímetros
+            diametro_mm = round(diametro_cm * 10, 2)
+            longitud_mm = round(longitud_cm * 10, 2)
+            altura_punta = round(longitud_mm * prop_punta/100, 2)
+            altura_cuerpo = round(longitud_mm - altura_punta, 2)
+            needle_diameter = 3.0
+
             # Calcular trayectorias de agujas
             needle_entries, needle_trajectories, ctv_centroid = [], [], None
             if structures:
-                diametro_mm = 30.0
-                longitud_mm = 50.0
                 needle_entries, needle_trajectories, ctv_centroid = compute_needle_trajectories(
                     num_needles, diametro_mm, longitud_mm, structures, volume_info,
                     ctv_centroid_offset=[ctv_offset_x, ctv_offset_y, ctv_offset_z]
@@ -785,38 +809,6 @@ if uploaded_file:
                     ctv_centroid
                 )
                 st.plotly_chart(fig_3d, use_container_width=True)
-
-            # Generador de cilindro con agujas
-            st.title("Generador de cilindro con punta tipo tampón (FreeCAD)")
-            st.write("Esta aplicación genera código para crear un cilindro con una punta redondeada y orificios para agujas y tándem en FreeCAD.")
-
-            # Parámetros en centímetros
-            col1, col2 = st.columns(2)
-            with col1:
-                diametro_cm = st.slider("Diámetro (cm)", min_value=1.0, max_value=12.0, value=3.0, step=0.1)
-                st.write(f"Diámetro seleccionado: {diametro_cm} cm ({diametro_cm*10} mm)")
-            
-            with col2:
-                longitud_cm = st.slider("Longitud total (cm)", min_value=2.0, max_value=20.0, value=5.0, step=0.1)
-                st.write(f"Longitud seleccionada: {longitud_cm} cm ({longitud_cm*10} mm)")
-            
-            with st.expander("Opciones avanzadas"):
-                prop_punta = st.slider("Proporción de la punta (%)", min_value=10, max_value=50, value=20, step=5)
-                st.write(f"La punta ocupará el {prop_punta}% de la longitud total")
-
-            # Convertir a milímetros
-            diametro_mm = round(diametro_cm * 10, 2)
-            longitud_mm = round(longitud_cm * 10, 2)
-            altura_punta = round(longitud_mm * prop_punta/100, 2)
-            altura_cuerpo = round(longitud_mm - altura_punta, 2)
-            needle_diameter = 3.0
-
-            # Recalcular trayectorias con los nuevos parámetros del cilindro
-            if structures:
-                needle_entries, needle_trajectories, ctv_centroid = compute_needle_trajectories(
-                    num_needles, diametro_mm, longitud_mm, structures, volume_info,
-                    ctv_centroid_offset=[ctv_offset_x, ctv_offset_y, ctv_offset_z]
-                )
 
             # Generar código FreeCAD
             needle_code = ""
