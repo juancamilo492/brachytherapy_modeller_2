@@ -8,3 +8,4 @@ pydicom
 scikit-image
 cadquery
 OCP
+plotly
