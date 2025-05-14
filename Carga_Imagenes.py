@@ -709,7 +709,7 @@ if uploaded_file:
                     structures if show_structures else None,
                     volume_info,
                     (window_width, window_center),
-                    needle_trajectories if show_needle_trajectories else None
+                    needle_trajectories if show_needle_trajectories else None,
                     linewidth=linewidth,
                     invert_colors=invert_colors
                 )
