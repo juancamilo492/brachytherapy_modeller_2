@@ -238,7 +238,7 @@ def compute_needle_trajectories(num_needles, cylinder_diameter, cylinder_length,
     
     if not ctv_structure:
         st.error("No se encontró estructura CTV")
-        return [], []
+        return [], [], None
 
     # Calcular centroide de CTV
     all_points = np.concatenate([c['points'] for c in ctv_structure['contours']])
@@ -501,7 +501,7 @@ def draw_3d_visualization(structures, needle_trajectories, volume_info, cylinder
             start = traj['entry']
             end = traj['end']
             color = 'green' if traj['feasible'] else 'red'
-            fig.add_trace(go -of go.Scatter3d(
+            fig.add_trace(go.Scatter3d(
                 x=[start[0], end[0]],
                 y=[start[1], end[1]],
                 z=[start[2], end[2]],
@@ -811,7 +811,7 @@ if uploaded_file:
             altura_cuerpo = round(longitud_mm - altura_punta, 2)
             needle_diameter = 3.0
 
-            # Recalcular trayectorias con los nieve parámetros del cilindro
+            # Recalcular trayectorias con los nuevos parámetros del cilindro
             if structures:
                 needle_entries, needle_trajectories, ctv_centroid = compute_needle_trajectories(
                     num_needles, diametro_mm, longitud_mm, structures, volume_info,
